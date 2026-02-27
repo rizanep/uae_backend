@@ -3,7 +3,7 @@ import os
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR.parent / '.env')
+load_dotenv(BASE_DIR / '.env')
 
 
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-+k1wieh3+)u!+gl^+2ck)_k9*lz^868=6862egu=b)gosl%1$%')
@@ -67,16 +67,26 @@ WSGI_APPLICATION = 'core.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME', 'ecommerceuae'),
-        'USER': os.environ.get('DB_USER', 'ecommerce_user'),
-        'PASSWORD': os.environ.get('DB_PASSWORD', 'StrongPassword@123'),
-        'HOST': os.environ.get('DB_HOST', 'localhost'),
-        'PORT': os.environ.get('DB_PORT', '5432'),
+USE_SQLITE = os.environ.get('USE_SQLITE', 'False').lower() == 'true'
+
+if USE_SQLITE:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.environ.get('DB_NAME', 'ecommerceuae'),
+            'USER': os.environ.get('DB_USER', 'ecommerce_user'),
+            'PASSWORD': os.environ.get('DB_PASSWORD', 'StrongPassword@123'),
+            'HOST': os.environ.get('DB_HOST', 'localhost'),
+            'PORT': os.environ.get('DB_PORT', '5432'),
+        }
+    }
 
 
 # Password validation
