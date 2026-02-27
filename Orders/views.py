@@ -28,11 +28,12 @@ class OrderViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if not user.is_authenticated:
             return Order.objects.none()
-        if user.role == "admin":
-            return Order.objects.all()
-        return Order.objects.filter(user=user).select_related(
-            "shipping_address", "payment", "payment__receipt"
+        qs = Order.objects.select_related(
+            "user", "shipping_address", "payment", "payment__receipt"
         ).prefetch_related("items", "status_history")
+        if user.role == "admin":
+            return qs
+        return qs.filter(user=user)
 
     @action(detail=False, methods=["post"])
     @transaction.atomic
@@ -54,13 +55,14 @@ class OrderViewSet(viewsets.ModelViewSet):
         # 2. Get Cart
         try:
             cart = Cart.objects.get(user=user)
-            if not cart.items.exists():
+            cart_items = list(cart.items.select_related("product").all())
+            if not cart_items:
                 return Response({"error": "Cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
         except Cart.DoesNotExist:
             return Response({"error": "Cart not found."}, status=status.HTTP_400_BAD_REQUEST)
 
         # 3. Validate Stock for all items
-        for cart_item in cart.items.all():
+        for cart_item in cart_items:
             if cart_item.product.stock < cart_item.quantity:
                 return Response(
                     {"error": f"Insufficient stock for {cart_item.product.name}."},
@@ -68,10 +70,11 @@ class OrderViewSet(viewsets.ModelViewSet):
                 )
 
         # 4. Create Order
+        total_amount = sum(cart_item.product.final_price * cart_item.quantity for cart_item in cart_items)
         order = Order.objects.create(
             user=user,
             shipping_address=address,
-            total_amount=cart.total_price,
+            total_amount=total_amount,
             status=Order.OrderStatus.PENDING,
             preferred_delivery_date=delivery_date,
             preferred_delivery_slot=delivery_slot,
@@ -80,7 +83,7 @@ class OrderViewSet(viewsets.ModelViewSet):
 
         # 5. Create Order Items (Snapshots)
         order_items = []
-        for cart_item in cart.items.all():
+        for cart_item in cart_items:
             order_items.append(OrderItem(
                 order=order,
                 product=cart_item.product,

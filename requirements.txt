@@ -37,3 +37,4 @@ Pillow
 requests
 django-filter
 reportlab
+django-redis

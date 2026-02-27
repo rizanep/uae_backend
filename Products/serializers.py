@@ -58,8 +58,29 @@ class ProductSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "slug", "created_at", "updated_at"]
 
     def get_average_rating(self, obj):
-        return obj.reviews.filter(is_visible=True).aggregate(Avg('rating'))['rating__avg'] or 0
+        annotated_value = getattr(obj, "average_rating", None)
+        if annotated_value is not None:
+            return annotated_value
+
+        prefetched_cache = getattr(obj, "_prefetched_objects_cache", None) or {}
+        prefetched_reviews = prefetched_cache.get("reviews")
+        if prefetched_reviews is not None:
+            visible_ratings = [r.rating for r in prefetched_reviews if getattr(r, "is_visible", True)]
+            if not visible_ratings:
+                return 0
+            return sum(visible_ratings) / len(visible_ratings)
+
+        return obj.reviews.filter(is_visible=True).aggregate(Avg("rating"))["rating__avg"] or 0
 
     def get_total_reviews(self, obj):
+        annotated_value = getattr(obj, "total_reviews", None)
+        if annotated_value is not None:
+            return annotated_value
+
+        prefetched_cache = getattr(obj, "_prefetched_objects_cache", None) or {}
+        prefetched_reviews = prefetched_cache.get("reviews")
+        if prefetched_reviews is not None:
+            return sum(1 for r in prefetched_reviews if getattr(r, "is_visible", True))
+
         return obj.reviews.filter(is_visible=True).count()
 

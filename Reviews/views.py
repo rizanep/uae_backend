@@ -23,9 +23,10 @@ class ReviewViewSet(viewsets.ModelViewSet):
     filterset_fields = ["product", "user", "rating"]
 
     def get_queryset(self):
+        qs = Review.objects.select_related("user", "product").prefetch_related("images")
         if self.request.user.is_staff:
-            return Review.objects.all()
-        return Review.objects.filter(is_visible=True)
+            return qs
+        return qs.filter(is_visible=True)
 
     def get_permissions(self):
         if self.action in ["list", "retrieve"]:

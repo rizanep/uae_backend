@@ -1,9 +1,11 @@
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from django.db.models import Prefetch
 from .models import Cart, CartItem
 from .serializers import CartSerializer, CartItemSerializer
 from Products.models import Product
+from Reviews.models import Review
 
 class CartViewSet(viewsets.ModelViewSet):
     """
@@ -14,13 +16,20 @@ class CartViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        # Return only the cart belonging to the authenticated user
-        return Cart.objects.filter(user=self.request.user)
+        return Cart.objects.filter(user=self.request.user).prefetch_related(
+            Prefetch(
+                "items",
+                queryset=CartItem.objects.select_related("product", "product__category").prefetch_related(
+                    "product__images",
+                    "product__videos",
+                    Prefetch("product__reviews", queryset=Review.objects.filter(is_visible=True)),
+                ),
+            )
+        )
 
     def get_object(self):
-        # Ensure a cart exists for the user when requested
         cart, created = Cart.objects.get_or_create(user=self.request.user)
-        return cart
+        return self.get_queryset().get(pk=cart.pk)
 
     @action(detail=False, methods=["get"])
     def my_cart(self, request):
