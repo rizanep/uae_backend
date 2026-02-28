@@ -39,6 +39,7 @@ class Order(models.Model):
         verbose_name=_("shipping address"),
     )
     total_amount = models.DecimalField(_("total amount"), max_digits=12, decimal_places=2)
+    tip_amount = models.DecimalField(_("tip amount"), max_digits=10, decimal_places=2, default=Decimal("0.00"))
     
     # Delivery Preferences
     preferred_delivery_date = models.DateField(_("preferred delivery date"), blank=True, null=True)

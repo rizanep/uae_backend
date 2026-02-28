@@ -250,6 +250,7 @@ Create an order from the current cart.
       "preferred_delivery_date": "2024-12-25",
       "preferred_delivery_slot": "morning",
       "delivery_notes": "Leave at reception",
+      "tip_amount": 10.00,
       "payment_method": "TELR"  // or "COD"
     }
     ```

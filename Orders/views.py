@@ -8,6 +8,7 @@ from django.shortcuts import get_object_or_404
 from django.http import HttpResponse
 from django.utils import timezone
 from datetime import timedelta
+from decimal import Decimal
 from .models import Order, OrderItem, Payment, Receipt
 from .serializers import OrderSerializer
 from Cart.models import Cart, CartItem
@@ -48,6 +49,10 @@ class OrderViewSet(viewsets.ModelViewSet):
         delivery_slot = request.data.get("preferred_delivery_slot")
         delivery_notes = request.data.get("delivery_notes")
         payment_method = request.data.get("payment_method", "TELR")
+        tip_amount = Decimal(str(request.data.get("tip_amount", 0)))
+        
+        if tip_amount < 0:
+            return Response({"error": "Tip amount cannot be negative."}, status=status.HTTP_400_BAD_REQUEST)
         
         # 1. Validate Address
         address = get_object_or_404(UserAddress, id=address_id, user=user)
@@ -70,11 +75,14 @@ class OrderViewSet(viewsets.ModelViewSet):
                 )
 
         # 4. Create Order
-        total_amount = sum(cart_item.product.final_price * cart_item.quantity for cart_item in cart_items)
+        cart_total = sum(cart_item.product.final_price * cart_item.quantity for cart_item in cart_items)
+        total_amount = cart_total + tip_amount
+        
         order = Order.objects.create(
             user=user,
             shipping_address=address,
             total_amount=total_amount,
+            tip_amount=tip_amount,
             status=Order.OrderStatus.PENDING,
             preferred_delivery_date=delivery_date,
             preferred_delivery_slot=delivery_slot,
