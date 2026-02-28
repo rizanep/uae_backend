@@ -6,6 +6,7 @@ from django.utils import timezone
 from datetime import timedelta
 import random
 from .tasks import send_email_task
+from django.conf import settings
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
@@ -214,7 +215,10 @@ class OTPRequestSerializer(serializers.Serializer):
             user, _ = User.objects.get_or_create(
                 email=email
             )
-        code = "000000"
+        if otp_type == 'phone' and getattr(settings, "USE_REAL_TWILIO_OTP", False):
+            code = f"{random.randint(100000, 999999):06d}"
+        else:
+            code = "000000"
         expires_at = timezone.now() + timedelta(minutes=5)
         otp = OTPToken.objects.create(
             user=user,

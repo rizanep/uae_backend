@@ -475,6 +475,12 @@ class OTPRequestView(APIView):
         print(f"Code: {otp.otp_code}")
         print(f"Expires at: {otp.expires_at}")
         print("=" * 50)
+
+        # Send OTP via Celery task if flag is enabled and it's a phone number
+        if otp.otp_type == 'phone' and otp.phone_number and getattr(settings, "USE_REAL_TWILIO_OTP", False):
+            from .tasks import send_otp_via_twilio
+            send_otp_via_twilio.delay(otp.phone_number, otp.otp_code)
+
         return Response(
             {
                 'detail': f'OTP sent to {otp.otp_type}',
