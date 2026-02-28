@@ -1,3 +1,7 @@
+from rest_framework import viewsets, permissions
+from .models import UserAddress
+from .serializers import UserAddressSerializer
+
 class UserAddressViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing user addresses.
