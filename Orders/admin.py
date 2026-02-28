@@ -21,7 +21,7 @@ class PaymentInline(admin.StackedInline):
 
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
-    list_display = ["id", "user", "status", "total_amount", "created_at"]
+    list_display = ["id", "user", "status", "total_amount", "created_at", "tip_amount"]
     list_filter = ["status", "created_at"]
     search_fields = ["id", "user__email", "user__phone_number"]
     inlines = [OrderItemInline, OrderStatusHistoryInline, PaymentInline]
@@ -29,7 +29,7 @@ class OrderAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ("Order Info", {
-            "fields": ("user", "status", "total_amount", "created_at", "updated_at")
+            "fields": ("user", "status", "total_amount", "created_at", "updated_at", "tip_amount")
         }),
         ("Shipping Info", {
             "fields": ("shipping_address",)
