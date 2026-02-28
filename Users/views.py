@@ -11,7 +11,7 @@ from django.core.files.base import ContentFile
 import json
 import requests
 
-from .models import User, GoogleOAuthToken, OTPToken, UserProfile
+from .models import User, GoogleOAuthToken, OTPToken, UserProfile, UserAddress
 from .serializers import (
     UserSerializer, UserCreateSerializer, UserUpdateSerializer,
     UserAdminSerializer, CustomTokenObtainPairSerializer,
