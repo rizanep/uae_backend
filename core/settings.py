@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 
-
+#check git pull
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-+k1wieh3+)u!+gl^+2ck)_k9*lz^868=6862egu=b)gosl%1$%')
 
 DEBUG = os.environ.get('DEBUG', 'True').lower() == 'true'
