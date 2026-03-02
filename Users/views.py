@@ -480,6 +480,13 @@ class OTPRequestView(APIView):
         if otp.otp_type == 'phone' and otp.phone_number and getattr(settings, "USE_REAL_TWILIO_OTP", False):
             from .tasks import send_otp_via_twilio
             send_otp_via_twilio.delay(otp.phone_number, otp.otp_code)
+        if otp.otp_type == 'email' and otp.email:
+            from .tasks import send_email_task
+            send_email_task.delay(
+                subject="Your verification code",
+                message=f"Your verification code is: {otp.otp_code}",
+                recipient_list=[otp.email],
+            )
 
         return Response(
             {

@@ -175,6 +175,8 @@ class GoogleOAuthSerializer(serializers.Serializer):
 class OTPRequestSerializer(serializers.Serializer):
     email = serializers.EmailField(required=False)
     phone_number = serializers.CharField(required=False)
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)
     otp_type = serializers.ChoiceField(choices=[('email', 'Email'), ('phone', 'Phone')])
 
     def validate(self, attrs):
@@ -189,6 +191,8 @@ class OTPRequestSerializer(serializers.Serializer):
         user = None
         email = validated_data.get('email')
         phone_number = validated_data.get('phone_number')
+        first_name = validated_data.get('first_name', '')
+        last_name = validated_data.get('last_name', '')
         otp_type = validated_data.get('otp_type')
 
         # Try to find existing user
@@ -198,34 +202,39 @@ class OTPRequestSerializer(serializers.Serializer):
             user = User.objects.filter(phone_number=phone_number).first()
 
         if not user:
-            # Create temporary user or handle as needed
-            # For now, we require user to be registered first via /users/ endpoint
-            # But the requirement says "OTP login", so maybe we auto-register?
-            # Let's assume user exists for now or return error if strict.
-            # Actually, typically OTP is for login OR registration.
-            # If user doesn't exist, we can't link OTP to user.
-            pass
+            # if not email:
+            #     normalized_phone = (phone_number or "").strip().lstrip("+")
+            #     email = f"phone_{normalized_phone}@otp.local"
+            user = User.objects.create_user(
+                email=email,
+                password=None,
+                phone_number=phone_number,
+                first_name=first_name,
+                last_name=last_name,
+            )
 
         # Generate 6 digit OTP
         if settings.USE_REAL_TWILIO_OTP and otp_type == 'phone':
-             code = str(random.randint(100000, 999999))
+            code = str(random.randint(100000, 999999))
         else:
-             code = "000000"
+            code = "000000"
             
         # Save OTP to database (we need a user, so if user is None, we might fail)
         # Let's assume user must exist for Login via OTP.
         if not user:
-             raise serializers.ValidationError("User not found. Please register first.")
+            raise serializers.ValidationError("User not found. Please register first.")
 
         # Invalidate old tokens
         OTPToken.objects.filter(user=user, otp_type=otp_type).delete()
 
+        expires_at = timezone.now() + timedelta(minutes=5)
         otp = OTPToken.objects.create(
             user=user,
             otp_code=code,
             otp_type=otp_type,
             email=email,
-            phone_number=phone_number
+            phone_number=phone_number,
+            expires_at=expires_at,
         )
         return otp
 
