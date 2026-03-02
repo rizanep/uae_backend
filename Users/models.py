@@ -100,6 +100,22 @@ class User(AbstractUser):
         blank=True,
         null=True
     )
+    referral_code = models.CharField(
+        max_length=20,
+        unique=True,
+        blank=True,
+        null=True,
+        db_index=True
+    )
+    referred_by = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name='referrals'
+    )
+    referral_reward_claimed = models.BooleanField(default=False)
+    
     is_email_verified = models.BooleanField(default=False)
     is_phone_verified = models.BooleanField(default=False)
     email_verified_at = models.DateTimeField(blank=True, null=True)
