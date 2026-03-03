@@ -1,5 +1,6 @@
 from django.utils import timezone
 from django.db import models
+from django.core.cache import cache
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -39,6 +40,26 @@ class MarketingMediaViewSet(viewsets.ModelViewSet):
                 models.Q(end_at__isnull=True) | models.Q(end_at__gte=now),
             )
         return qs.order_by("sort_order", "-created_at")
+
+    def list(self, request, *args, **kwargs):
+        user = request.user
+        is_staff = user and user.is_staff
+        
+        # Determine cache key based on user role
+        cache_key = "marketing_media_list_staff" if is_staff else "marketing_media_list_public"
+        
+        # Check cache
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+             return Response(cached_data)
+             
+        # Generate response
+        response = super().list(request, *args, **kwargs)
+        
+        # Set cache (15 minutes = 900 seconds)
+        cache.set(cache_key, response.data, timeout=900)
+        
+        return response
 
 
 class CouponViewSet(viewsets.ReadOnlyModelViewSet):

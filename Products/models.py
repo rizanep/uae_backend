@@ -3,6 +3,10 @@ from django.utils.text import slugify
 from django.utils.translation import gettext_lazy as _
 from Users.models import SoftDeleteModel
 
+# Import Delivery Models (Circular import handling might be needed if they import Product)
+# But here we can define them or import them if they are separate.
+# Since Product is used in ProductDeliveryTier as ForeignKey('Product'), it's fine.
+
 class Category(SoftDeleteModel):
     """
     Product Category model with support for subcategories.
@@ -97,6 +101,8 @@ class Product(SoftDeleteModel):
         if self.discount_price:
             return self.discount_price
         return self.price
+
+from .delivery_models import ProductDeliveryTier
 
 
 class ProductImage(models.Model):

@@ -2,6 +2,7 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
@@ -37,6 +38,7 @@ class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.filter(deleted_at__isnull=True)
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action and user role"""
@@ -85,12 +87,18 @@ class UserViewSet(viewsets.ModelViewSet):
                 {'detail': 'You do not have permission to update this user.'},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        partial = kwargs.pop('partial', False)
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         
-        return Response(serializer.data)
+        # Refresh instance to reflect nested updates and return full read serializer
+        refreshed = User.objects.select_related("profile").get(pk=instance.pk)
+        return Response(UserSerializer(refreshed).data)
+
+    def partial_update(self, request, *args, **kwargs):
+        kwargs['partial'] = True
+        return self.update(request, *args, **kwargs)
     
     def destroy(self, request, *args, **kwargs):
         """Soft delete user"""

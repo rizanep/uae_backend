@@ -2,9 +2,12 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db.models import Prefetch
+from django.utils import timezone
+from datetime import timedelta
 from .models import Cart, CartItem
 from .serializers import CartSerializer, CartItemSerializer
 from Products.models import Product
+from Products.delivery_models import ProductDeliveryTier
 from Reviews.models import Review
 
 class CartViewSet(viewsets.ModelViewSet):
@@ -80,6 +83,80 @@ class CartViewSet(viewsets.ModelViewSet):
             {"message": "Item added to cart."},
             status=status.HTTP_201_CREATED
         )
+
+    @action(detail=False, methods=["get"])
+    def delivery_options(self, request):
+        """
+        Calculate available delivery dates and slots based on cart items.
+        Logic:
+        1. Find the required delivery days (lead time) for each item based on quantity tiers.
+        2. Take the maximum lead time among all items.
+        3. Generate available dates starting from today + max_lead_time.
+        """
+        cart = self.get_object()
+        items = cart.items.all()
+        
+        if not items.exists():
+            return Response(
+                {"error": "Cart is empty"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        max_lead_days = 0
+        details = []
+        today = timezone.now().date()
+        
+        for item in items:
+            # Find applicable tier:
+            # Get tiers with min_quantity <= item.quantity, order by min_quantity desc (highest matching tier first)
+            tier = ProductDeliveryTier.objects.filter(
+                product=item.product, 
+                min_quantity__lte=item.quantity
+            ).order_by('-min_quantity').first()
+            
+            if tier:
+                lead_days = tier.delivery_days
+                reason = f"Tier: Qty >= {tier.min_quantity}"
+            else:
+                # Default logic if no tier matches:
+                # 1. Check if product has a default lead time (future improvement)
+                # 2. Use global default (e.g., 1 day)
+                lead_days = 1 
+                reason = "Default (No matching tier)"
+                
+            if lead_days > max_lead_days:
+                max_lead_days = lead_days
+                
+            details.append({
+                "product": item.product.name,
+                "quantity": item.quantity,
+                "lead_days": lead_days,
+                "reason": reason
+            })
+            
+        # Calculate dates
+        start_date = today + timedelta(days=max_lead_days)
+        
+        # Generate next 7 available days
+        available_dates = []
+        for i in range(7):
+            current_date = start_date + timedelta(days=i)
+            available_dates.append({
+                "date": current_date.isoformat(),
+                "day_name": current_date.strftime("%A"),
+                "slots": [
+                    {"id": "morning", "label": "09:00 AM - 12:00 PM"},
+                    {"id": "afternoon", "label": "02:00 PM - 05:00 PM"},
+                    {"id": "evening", "label": "06:00 PM - 09:00 PM"},
+                ]
+            })
+            
+        return Response({
+            "max_lead_days": max_lead_days,
+            "earliest_delivery_date": start_date.isoformat(),
+            "available_dates": available_dates,
+            "item_details": details
+        })
 
     @action(detail=False, methods=["post"])
     def update_item_quantity(self, request):
