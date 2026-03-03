@@ -126,6 +126,18 @@ class UserUpdateSerializer(serializers.ModelSerializer):
             'profile',
         ]
 
+    def validate(self, attrs):
+        email = attrs.get('email', None)
+        if email is not None:
+            email = email.strip()
+            if email == '':
+                attrs['email'] = None
+        final_email = attrs.get('email', getattr(self.instance, 'email', None))
+        final_phone = attrs.get('phone_number', getattr(self.instance, 'phone_number', None))
+        if not final_email and not final_phone:
+            raise serializers.ValidationError('At least one of email or phone_number must be set.')
+        return attrs
+
     def update(self, instance, validated_data):
         profile_data = validated_data.pop('profile', None)
         
@@ -151,6 +163,18 @@ class UserAdminSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = '__all__'
+
+    def validate(self, attrs):
+        email = attrs.get('email', None)
+        if email is not None:
+            email = email.strip()
+            if email == '':
+                attrs['email'] = None
+        final_email = attrs.get('email', getattr(self.instance, 'email', None))
+        final_phone = attrs.get('phone_number', getattr(self.instance, 'phone_number', None))
+        if not final_email and not final_phone:
+            raise serializers.ValidationError('At least one of email or phone_number must be set.')
+        return attrs
 
 
 class ChangePasswordSerializer(serializers.Serializer):
