@@ -263,6 +263,7 @@ class UserProfile(models.Model):
         ('en', 'English'),
         ('ar', 'Arabic'),
         ('cn', 'Chineese')
+        ('zh', 'Chineese')
     ]
     
     GENDER_CHOICES = [
