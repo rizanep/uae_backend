@@ -8,6 +8,7 @@ from .views import (
     GoogleAuthCallbackView,
     OTPRequestView,
     OTPLoginView,
+    VerifyNewContactView
 )
 from .user_address_viewset import UserAddressViewSet
 
@@ -23,4 +24,5 @@ urlpatterns = [
     path('auth/google/callback/', GoogleAuthCallbackView.as_view(), name='google_callback'),
     path('auth/otp/request/', OTPRequestView.as_view(), name='otp_request'),
     path('auth/otp/login/', OTPLoginView.as_view(), name='otp_login'),
+    path('auth/otp/verify-update/', VerifyNewContactView.as_view(), name='otp_verify_update'),
 ]

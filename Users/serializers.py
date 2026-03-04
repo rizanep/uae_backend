@@ -224,6 +224,10 @@ class OTPRequestSerializer(serializers.Serializer):
             user = User.objects.filter(email=email).first()
         else:
             user = User.objects.filter(phone_number=phone_number).first()
+        
+        # If user not found, try to use the authenticated user (for contact update)
+        if not user and 'request' in self.context and self.context['request'].user.is_authenticated:
+            user = self.context['request'].user
 
         if not user:
             # if not email:
@@ -298,6 +302,56 @@ class OTPLoginSerializer(serializers.Serializer):
              raise serializers.ValidationError("OTP has expired.")
 
         attrs['user'] = user
+        attrs['otp_record'] = otp_record
+        return attrs
+
+
+class VerifyNewContactSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=False)
+    phone_number = serializers.CharField(required=False)
+    otp_code = serializers.CharField(max_length=6)
+    otp_type = serializers.ChoiceField(choices=[('email', 'Email'), ('phone', 'Phone')])
+
+    def validate(self, attrs):
+        email = attrs.get('email')
+        phone_number = attrs.get('phone_number')
+        otp_code = attrs.get('otp_code')
+        otp_type = attrs.get('otp_type')
+        user = self.context['request'].user
+
+        if otp_type == 'email' and not email:
+            raise serializers.ValidationError("Email is required for email OTP.")
+        if otp_type == 'phone' and not phone_number:
+            raise serializers.ValidationError("Phone number is required for phone OTP.")
+
+        # Check if the new contact is already in use by another user
+        if otp_type == 'email':
+            if User.objects.filter(email=email).exclude(id=user.id).exists():
+                raise serializers.ValidationError("This email is already in use.")
+        else:
+            if User.objects.filter(phone_number=phone_number).exclude(id=user.id).exists():
+                raise serializers.ValidationError("This phone number is already in use.")
+
+        otp_record = OTPToken.objects.filter(
+            user=user,
+            otp_code=otp_code,
+            otp_type=otp_type,
+            is_verified=False
+        ).order_by('-created_at').first()
+
+        # Check if OTP matches the contact provided
+        if otp_record:
+            if otp_type == 'email' and otp_record.email != email:
+                 raise serializers.ValidationError("OTP does not match the provided email.")
+            if otp_type == 'phone' and otp_record.phone_number != phone_number:
+                 raise serializers.ValidationError("OTP does not match the provided phone number.")
+
+        if not otp_record:
+            raise serializers.ValidationError("Invalid or expired OTP.")
+        
+        if otp_record.is_expired():
+             raise serializers.ValidationError("OTP has expired.")
+
         attrs['otp_record'] = otp_record
         return attrs
 

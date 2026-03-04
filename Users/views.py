@@ -17,7 +17,7 @@ from .serializers import (
     UserSerializer, UserCreateSerializer, UserUpdateSerializer,
     UserAdminSerializer, CustomTokenObtainPairSerializer,
     ChangePasswordSerializer, GoogleOAuthSerializer,
-    OTPRequestSerializer, OTPLoginSerializer
+    OTPRequestSerializer, OTPLoginSerializer, VerifyNewContactSerializer
 )
 from .permissions import IsOwnerOrAdmin, IsAdmin
 
@@ -543,6 +543,19 @@ class OTPLoginView(APIView):
             otp_record.save(update_fields=['is_verified', 'verified_at'])
 
             user = otp_record.user
+
+            # Mark user contact as verified
+            if otp_type == 'email':
+                if not user.is_email_verified:
+                    user.is_email_verified = True
+                    user.email_verified_at = timezone.now()
+                    user.save(update_fields=['is_email_verified', 'email_verified_at'])
+            elif otp_type == 'phone':
+                if not user.is_phone_verified:
+                    user.is_phone_verified = True
+                    user.phone_verified_at = timezone.now()
+                    user.save(update_fields=['is_phone_verified', 'phone_verified_at'])
+
             refresh = RefreshToken.for_user(user)
             response = Response(
                 {
@@ -569,5 +582,46 @@ class OTPLoginView(APIView):
                 samesite='Lax',
             )
             return response
+        except Exception as e:
+            return Response({'detail': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class VerifyNewContactView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = VerifyNewContactSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        
+        otp_record = serializer.validated_data['otp_record']
+        otp_type = serializer.validated_data['otp_type']
+        new_contact = serializer.validated_data.get('email') if otp_type == 'email' else serializer.validated_data.get('phone_number')
+        user = request.user
+
+        try:
+            # Verify OTP
+            otp_record.is_verified = True
+            otp_record.verified_at = timezone.now()
+            otp_record.save(update_fields=['is_verified', 'verified_at'])
+
+            # Update User Contact
+            if otp_type == 'email':
+                user.email = new_contact
+                user.is_email_verified = True
+                user.email_verified_at = timezone.now()
+                user.save(update_fields=['email', 'is_email_verified', 'email_verified_at'])
+            else:
+                user.phone_number = new_contact
+                user.is_phone_verified = True
+                user.phone_verified_at = timezone.now()
+                user.save(update_fields=['phone_number', 'is_phone_verified', 'phone_verified_at'])
+
+            return Response(
+                {
+                    'detail': f'{otp_type.capitalize()} updated successfully.',
+                    'user': UserSerializer(user).data
+                },
+                status=status.HTTP_200_OK
+            )
         except Exception as e:
             return Response({'detail': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
