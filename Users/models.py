@@ -262,7 +262,7 @@ class UserProfile(models.Model):
     LANGUAGE_CHOICES = [
         ('en', 'English'),
         ('ar', 'Arabic'),
-        ('cn', 'Chineese')
+        ('cn', 'Chineese'),
         ('zh', 'Chineese')
     ]
     
