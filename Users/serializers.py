@@ -148,8 +148,10 @@ class UserUpdateSerializer(serializers.ModelSerializer):
 
         # Update UserProfile fields if provided
         if profile_data:
-            # Create profile if it doesn't exist (though signal should have created it)
             profile, created = UserProfile.objects.get_or_create(user=instance)
+            plang = profile_data.get('preferred_language')
+            if plang == 'zh':
+                profile_data['preferred_language'] = 'cn'
             for attr, value in profile_data.items():
                 setattr(profile, attr, value)
             profile.save()

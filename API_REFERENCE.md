@@ -320,6 +320,46 @@ Create an order from the current cart.
 *   **Single**: `/api/notifications/{id}/mark_as_read/` (`POST`)
 *   **All**: `/api/notifications/mark_all_as_read/` (`POST`)
 
+### Notification Templates (Admin)
+Manage reusable notification templates.
+
+*   **List/Create**: `/api/notifications/templates/` (`GET`, `POST`)
+*   **Retrieve/Update/Delete**: `/api/notifications/templates/{id}/` (`GET`, `PUT`, `PATCH`, `DELETE`)
+*   **Auth**: Admin only
+*   **Body (Create/Update)**:
+    ```json
+    {
+      "name": "Order Shipped",
+      "type": "IN_APP",
+      "subject": "Your order has shipped",
+      "body": "Hi {{ user.first_name }}, your order is on the way."
+    }
+    ```
+
+### Broadcast Messages (Admin)
+Create and send bulk notifications to all users or selected recipients.
+
+*   **Create Broadcast (does not send)**: `/api/notifications/broadcasts/` (`POST`)
+*   **List Broadcasts**: `/api/notifications/broadcasts/` (`GET`)
+*   **Retrieve/Update/Delete**: `/api/notifications/broadcasts/{id}/` (`GET`, `PUT`, `PATCH`, `DELETE`)
+*   **Send Broadcast**: `/api/notifications/broadcasts/{id}/send/` (`POST`)
+*   **Auth**: Admin only
+*   **Body (Create/Update)**:
+    ```json
+    {
+      "template": 1,
+      "subject": "Big Sale",
+      "message": "Up to 50% off today.",
+      "type": "IN_APP",
+      "send_to_all": true,
+      "recipients": [1, 2, 3]
+    }
+    ```
+    Notes:
+    *   If `send_to_all` is `true`, `recipients` is ignored.
+    *   If `template` is provided, empty `subject`/`message` are filled from the template when sending.
+    *   In-app broadcasts create `Notification` rows; other types are mocked.
+
 ---
 
 ## Marketing
