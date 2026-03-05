@@ -215,6 +215,16 @@ class LoginView(TokenObtainPairView):
     permission_classes = [permissions.AllowAny]
     
     def post(self, request, *args, **kwargs):
+        # Check user active status
+        email = request.data.get('email')
+        if email:
+            user = User.objects.filter(email=email).first()
+            if user and not user.is_active:
+                return Response(
+                    {'detail': 'user is inactive pls contact support'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
         response = super().post(request, *args, **kwargs)
         
         if response.status_code == status.HTTP_200_OK and isinstance(response.data, dict):
@@ -258,6 +268,22 @@ class RefreshView(TokenRefreshView):
         if 'refresh' not in request.data and COOKIE_REFRESH_NAME in request.COOKIES:
             request.data = request.data.copy()
             request.data['refresh'] = request.COOKIES.get(COOKIE_REFRESH_NAME)
+        
+        # Check user active status from refresh token
+        refresh_token = request.data.get('refresh')
+        if refresh_token:
+            try:
+                token = RefreshToken(refresh_token)
+                user_id = token['user_id']
+                user = User.objects.get(id=user_id)
+                if not user.is_active:
+                    return Response(
+                        {'detail': 'user is inactive pls contact support'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            except Exception:
+                # If token is invalid, let super().post() handle it
+                pass
         
         response = super().post(request, *args, **kwargs)
         
@@ -375,6 +401,12 @@ class GoogleAuthCallbackView(APIView):
                 }
             )
 
+            if not user.is_active:
+                return Response(
+                    {'detail': 'user is inactive pls contact support'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
             if not created:
                 user.email = email
                 user.first_name = first_name
@@ -474,6 +506,14 @@ class OTPRequestView(APIView):
         serializer = OTPRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         otp = serializer.save()
+        
+        if not otp.user.is_active:
+            otp.delete()
+            return Response(
+                {'detail': 'user is inactive pls contact support'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         # DEV: print OTP to console for testing
         print("=" * 50)
         print("OTP generated")
@@ -543,6 +583,12 @@ class OTPLoginView(APIView):
             otp_record.save(update_fields=['is_verified', 'verified_at'])
 
             user = otp_record.user
+
+            if not user.is_active:
+                return Response(
+                    {'detail': 'user is inactive pls contact support'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
             # Mark user contact as verified
             if otp_type == 'email':

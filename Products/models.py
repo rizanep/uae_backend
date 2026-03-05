@@ -103,6 +103,7 @@ class Product(SoftDeleteModel):
         return self.price
 
 from .delivery_models import ProductDeliveryTier
+from .discount_models import ProductDiscountTier
 
 
 class ProductImage(models.Model):

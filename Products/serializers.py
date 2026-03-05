@@ -1,6 +1,16 @@
 from rest_framework import serializers
 from django.db.models import Avg
-from .models import Category, Product, ProductImage, ProductVideo
+from .models import Category, Product, ProductImage, ProductVideo, ProductDeliveryTier, ProductDiscountTier
+
+class ProductDeliveryTierSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductDeliveryTier
+        fields = ["id", "product", "min_quantity", "delivery_days"]
+
+class ProductDiscountTierSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductDiscountTier
+        fields = ["id", "product", "min_quantity", "discount_percentage"]
 
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -27,6 +37,8 @@ class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     images = ProductImageSerializer(many=True, read_only=True)
     videos = ProductVideoSerializer(many=True, read_only=True)
+    delivery_tiers = ProductDeliveryTierSerializer(many=True, read_only=True)
+    discount_tiers = ProductDiscountTierSerializer(many=True, read_only=True)
     final_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     average_rating = serializers.SerializerMethodField()
     total_reviews = serializers.SerializerMethodField()
@@ -50,6 +62,8 @@ class ProductSerializer(serializers.ModelSerializer):
             "expected_delivery_time",
             "images",
             "videos",
+            "delivery_tiers",
+            "discount_tiers",
             "average_rating",
             "total_reviews",
             "created_at",

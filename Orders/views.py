@@ -16,6 +16,8 @@ from Users.models import UserAddress, User
 from Reviews.models import Review
 from .payment_service import TelrPaymentService
 from .receipt_templates import render_receipt_image, render_receipt_pdf
+from .utils import calculate_delivery_estimate, get_earliest_delivery_date
+import re
 
 class OrderViewSet(viewsets.ModelViewSet):
     """
@@ -60,11 +62,32 @@ class OrderViewSet(viewsets.ModelViewSet):
         # 2. Get Cart
         try:
             cart = Cart.objects.get(user=user)
-            cart_items = list(cart.items.select_related("product").all())
+            # Optimize query to fetch discount tiers
+            cart_items = list(cart.items.select_related("product").prefetch_related("product__discount_tiers").all())
             if not cart_items:
                 return Response({"error": "Cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
         except Cart.DoesNotExist:
             return Response({"error": "Cart not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 2.5. Validate Preferred Delivery Date
+        if delivery_date:
+            min_delivery_date = get_earliest_delivery_date(cart_items)
+            # Convert string to date if necessary (DRF usually handles this but input is from request.data)
+            # Assuming YYYY-MM-DD format from frontend
+            from datetime import datetime
+            try:
+                if isinstance(delivery_date, str):
+                    parsed_date = datetime.strptime(delivery_date, "%Y-%m-%d").date()
+                else:
+                    parsed_date = delivery_date
+                
+                if parsed_date < min_delivery_date:
+                    return Response(
+                        {"error": f"Preferred delivery date cannot be earlier than {min_delivery_date}."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            except ValueError:
+                return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
 
         # 3. Validate Stock for all items
         for cart_item in cart_items:
@@ -75,7 +98,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 )
 
         # 4. Create Order
-        cart_total = sum(cart_item.product.final_price * cart_item.quantity for cart_item in cart_items)
+        cart_total = sum(cart_item.subtotal for cart_item in cart_items)
         total_amount = cart_total + tip_amount
         
         order = Order.objects.create(
@@ -97,7 +120,7 @@ class OrderViewSet(viewsets.ModelViewSet):
                 product=cart_item.product,
                 product_name=cart_item.product.name,
                 quantity=cart_item.quantity,
-                price=cart_item.product.final_price
+                price=cart_item.unit_price
             ))
         OrderItem.objects.bulk_create(order_items)
 
@@ -401,3 +424,27 @@ class OrderViewSet(viewsets.ModelViewSet):
             },
         }
         return Response(data)
+
+    @action(detail=False, methods=["get"])
+    def estimate_delivery(self, request):
+        """
+        Calculate the estimated delivery date for the items in the user's cart.
+        Returns the earliest possible delivery date for the entire order.
+        """
+        user = request.user
+        try:
+            cart = Cart.objects.get(user=user)
+            cart_items = list(cart.items.select_related("product").all())
+            if not cart_items:
+                return Response({"error": "Cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
+        except Cart.DoesNotExist:
+            return Response({"error": "Cart not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        max_days, details = calculate_delivery_estimate(cart_items)
+        estimated_date = timezone.now().date() + timedelta(days=max_days)
+        
+        return Response({
+            "estimated_delivery_date": estimated_date,
+            "max_delivery_days": max_days,
+            "details": details
+        })

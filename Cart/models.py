@@ -2,6 +2,7 @@ from django.db import models
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
 from Products.models import Product
+from decimal import Decimal
 
 class Cart(models.Model):
     """
@@ -63,5 +64,21 @@ class CartItem(models.Model):
         return f"{self.quantity} x {self.product.name} in {self.cart.user}'s cart"
 
     @property
+    def unit_price(self):
+        """
+        Calculate unit price considering quantity-based discounts.
+        """
+        price = self.product.final_price
+        # Check for discount tiers
+        # We access related manager directly. To optimize, viewsets should prefetch 'product__discount_tiers'
+        tier = self.product.discount_tiers.filter(min_quantity__lte=self.quantity).order_by('-min_quantity').first()
+        
+        if tier:
+            discount_amount = (price * tier.discount_percentage) / Decimal("100")
+            price -= discount_amount
+            
+        return price
+
+    @property
     def subtotal(self):
-        return self.product.final_price * self.quantity
+        return self.unit_price * self.quantity

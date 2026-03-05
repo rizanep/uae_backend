@@ -24,10 +24,19 @@ class PaymentSerializer(serializers.ModelSerializer):
 
 class OrderItemSerializer(serializers.ModelSerializer):
     subtotal = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    product_image = serializers.SerializerMethodField()
 
     class Meta:
         model = OrderItem
-        fields = ["id", "product", "product_name", "quantity", "price", "subtotal"]
+        fields = ["id", "product", "product_name", "product_image", "quantity", "price", "subtotal"]
+
+    def get_product_image(self, obj):
+        if obj.product and obj.product.image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.product.image.url)
+            return obj.product.image.url
+        return None
 
 
 class OrderSerializer(serializers.ModelSerializer):
@@ -44,6 +53,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "shipping_address",
             "shipping_address_details",
             "total_amount",
+            "tip_amount",
             "preferred_delivery_date",
             "preferred_delivery_slot",
             "delivery_notes",
