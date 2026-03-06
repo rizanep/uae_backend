@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Notification, NotificationTemplate, Broadcast, NotificationType
+from .models import Notification, NotificationTemplate, Broadcast, NotificationType, ContactMessage
 
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -40,3 +40,10 @@ class BroadcastSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["is_sent", "sent_at", "created_at", "updated_at"]
+
+
+class ContactMessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ContactMessage
+        fields = ["id", "name", "email", "subject", "message", "is_resolved", "created_at"]
+        read_only_fields = ["name", "email", "is_resolved", "created_at"]

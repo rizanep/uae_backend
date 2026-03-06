@@ -1,15 +1,18 @@
-from rest_framework import viewsets, mixins, status
+from rest_framework import viewsets, mixins, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+from django.core.mail import send_mail
+from django.conf import settings
 from Users.permissions import IsAdmin
-from .models import Notification, Broadcast, NotificationTemplate, NotificationType
+from .models import Notification, Broadcast, NotificationTemplate, NotificationType, ContactMessage
 from .serializers import (
     NotificationSerializer,
     BroadcastSerializer,
     NotificationTemplateSerializer,
+    ContactMessageSerializer
 )
 
 class NotificationViewSet(
@@ -97,8 +100,65 @@ class BroadcastViewSet(viewsets.ModelViewSet):
         broadcast.message = message
         broadcast.type = notif_type
         broadcast.save()
+        
+        return Response({"detail": f"Broadcast sent to {sent_count} recipients."}, status=status.HTTP_200_OK)
 
-        return Response(
-            {"detail": f"Broadcast sent to {sent_count} recipient(s)."},
-            status=status.HTTP_200_OK,
-        )
+
+class ContactMessageViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
+    """
+    API for 'Contact Us' form.
+    Only allows authenticated users with verified emails to send messages.
+    """
+    queryset = ContactMessage.objects.all()
+    serializer_class = ContactMessageSerializer
+    permission_classes = [IsAuthenticated]
+
+    def perform_create(self, serializer, **kwargs):
+        serializer.save(**kwargs)
+
+    def create(self, request, *args, **kwargs):
+        if not request.user.is_email_verified:
+            return Response(
+                {"detail": "Your email must be verified to send a message."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        # Auto-fill name and email from authenticated user
+        user_name = request.user.get_full_name() or request.user.email
+        self.perform_create(serializer, name=user_name, email=request.user.email)
+        
+        # Send Email to Admin
+        contact_msg = serializer.instance
+        
+        subject = f"New Contact Message: {contact_msg.subject}"
+        message = f"""
+You have received a new message from the contact form.
+
+Name: {contact_msg.name}
+Email: {contact_msg.email}
+Subject: {contact_msg.subject}
+
+Message:
+{contact_msg.message}
+        """
+        
+        # Send from DEFAULT_FROM_EMAIL to DEFAULT_FROM_EMAIL (Admin)
+        # Reply-to is set to the user's email
+        try:
+            send_mail(
+                subject,
+                message,
+                settings.DEFAULT_FROM_EMAIL,
+                [settings.DEFAULT_FROM_EMAIL], 
+                fail_silently=False,
+                reply_to=[contact_msg.email]
+            )
+        except Exception as e:
+            # Log error but don't fail the request if DB save was successful
+            print(f"Error sending contact email: {e}")
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)

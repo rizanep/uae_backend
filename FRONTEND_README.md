@@ -138,3 +138,39 @@ Once an order is paid (status `PAID` or `DELIVERED`), users can download receipt
 - **URL**: `/api/orders/{id}/admin_update_status/`
 - **Method**: `POST`
 - **Body**: `{"status": "shipped", "notes": "Optional note"}`
+
+## 6. Contact Us
+
+### Send Message Endpoint
+Allows **authenticated users with verified emails** to send a message to the admin.
+The system will save the message and email the admin automatically.
+The `name` and `email` fields are automatically populated from the user's profile.
+
+- **URL**: `/api/notifications/contact/`
+- **Method**: `POST`
+- **Auth**: Required (Bearer Token)
+
+**Request Body**:
+```json
+{
+  "subject": "Inquiry about bulk order",
+  "message": "Hello, I would like to order 500 units of..." // Max length: 2000 characters
+}
+```
+
+**Errors**:
+- `401 Unauthorized`: User is not logged in.
+- `403 Forbidden`: User is logged in but email is not verified (`detail`: "Your email must be verified to send a message.").
+
+**Response**:
+```json
+{
+  "id": 1,
+  "name": "John Doe",
+  "email": "john@example.com",
+  "subject": "Inquiry about bulk order",
+  "message": "Hello, I would like to order 500 units of...",
+  "is_resolved": false,
+  "created_at": "2023-10-25T12:00:00Z"
+}
+```

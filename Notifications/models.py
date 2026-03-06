@@ -70,3 +70,22 @@ class Broadcast(TimestampedModel):
                 # If user didn't change type from default, use template type
                 self.type = self.template.type
         super().save(*args, **kwargs)
+
+
+class ContactMessage(TimestampedModel):
+    """
+    Stores 'Contact Us' messages from users.
+    """
+    name = models.CharField(_("full name"), max_length=255)
+    email = models.EmailField(_("email address"))
+    subject = models.CharField(_("subject"), max_length=255)
+    message = models.TextField(_("message"), max_length=2000)
+    is_resolved = models.BooleanField(_("is resolved"), default=False)
+
+    class Meta:
+        verbose_name = _("Contact Message")
+        verbose_name_plural = _("Contact Messages")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.subject} - {self.email}"

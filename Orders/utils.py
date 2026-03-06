@@ -13,7 +13,7 @@ def calculate_delivery_estimate(cart_items):
     for item in cart_items:
         product = item.product
         quantity = item.quantity
-        days = 3  # Default fallback
+        days = 1  # Default fallback
         source = "default"
 
         # Check for delivery tiers
