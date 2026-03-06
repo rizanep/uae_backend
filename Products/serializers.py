@@ -59,6 +59,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "is_available",
             "image",
             "sku",
+            "unit",
             "expected_delivery_time",
             "images",
             "videos",

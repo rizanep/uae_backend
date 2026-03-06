@@ -39,6 +39,12 @@ class Category(SoftDeleteModel):
         super().save(*args, **kwargs)
 
 
+class ProductUnit(models.TextChoices):
+    PIECE = "piece", _("Piece")
+    KG = "kg", _("Kg")
+    PACKET = "packet", _("Packet")
+
+
 class Product(SoftDeleteModel):
     """
     Product model with professional ecommerce fields.
@@ -65,6 +71,7 @@ class Product(SoftDeleteModel):
     is_available = models.BooleanField(_("is available"), default=True)
     image = models.ImageField(_("main image"), upload_to="products/", blank=True, null=True)
     sku = models.CharField(_("SKU"), max_length=50, unique=True, blank=True)
+    unit = models.CharField(_("unit"), max_length=20, choices=ProductUnit.choices, default=ProductUnit.PIECE)
     expected_delivery_time = models.CharField(
         _("expected delivery time"), 
         max_length=100, 
