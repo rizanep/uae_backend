@@ -43,6 +43,18 @@ class ReviewSerializer(serializers.ModelSerializer):
         ]
 
     def create(self, validated_data):
+        user = self.context['request'].user
+        product = validated_data['product']
+        
+        # Check if user already has a review for this product
+        existing_review = Review.objects.filter(user=user, product=product).first()
+        if existing_review:
+            raise serializers.ValidationError({
+                "detail": "You have already reviewed this product. You can edit your existing review instead.",
+                "existing_review_id": existing_review.id,
+                "can_edit": True
+            })
+        
         uploaded_images = validated_data.pop("uploaded_images", [])
 
         review = Review.objects.create(**validated_data)
@@ -51,3 +63,17 @@ class ReviewSerializer(serializers.ModelSerializer):
             ReviewImage.objects.create(review=review, image=image)
 
         return review
+
+    def update(self, instance, validated_data):
+        uploaded_images = validated_data.pop("uploaded_images", [])
+        
+        # Update the review fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        
+        # Add new images if provided
+        for image in uploaded_images:
+            ReviewImage.objects.create(review=instance, image=image)
+        
+        return instance

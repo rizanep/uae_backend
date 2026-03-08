@@ -69,17 +69,29 @@ class ReviewViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
-    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAdminUser])
-    def toggle_visibility(self, request, pk=None):
+    @action(detail=False, methods=["get"], permission_classes=[permissions.IsAuthenticated])
+    def my_review(self, request):
         """
-        Admin can hide/show a review.
+        Get the current user's review for a specific product.
+        Useful for checking if user already reviewed a product before creating a new one.
         """
-        review = self.get_object()
-        review.is_visible = not review.is_visible
-        review.save()
-
-        status_text = "visible" if review.is_visible else "hidden"
-
-        return Response({
-            "message": f"Review is now {status_text}"
-        })
+        product_id = request.query_params.get('product_id')
+        
+        if not product_id:
+            return Response(
+                {"error": "product_id parameter is required"}, 
+                status=400
+            )
+        
+        try:
+            review = Review.objects.get(
+                user=request.user, 
+                product_id=product_id
+            )
+            serializer = self.get_serializer(review)
+            return Response(serializer.data)
+        except Review.DoesNotExist:
+            return Response(
+                {"detail": "No review found for this product"}, 
+                status=404
+            )
