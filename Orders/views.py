@@ -15,7 +15,7 @@ from Cart.models import Cart, CartItem
 from Users.models import UserAddress, User
 from Reviews.models import Review
 from .payment_service import TelrPaymentService
-from .receipt_templates import render_receipt_image, render_receipt_pdf
+from .receipt_templates import render_receipt_image, render_receipt_pdf, render_admin_receipt_pdf
 from .utils import calculate_delivery_estimate, get_earliest_delivery_date
 import re
 
@@ -290,6 +290,18 @@ class OrderViewSet(viewsets.ModelViewSet):
         buffer = render_receipt_pdf(order, receipt)
         response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
         response["Content-Disposition"] = f'inline; filename="receipt_{receipt.receipt_number}.pdf"'
+        return response
+
+    @action(detail=True, methods=["get"], permission_classes=[permissions.IsAdminUser])
+    def admin_receipt_pdf(self, request, pk=None):
+        """
+        Generate a detailed PDF receipt for admin use with all order details and QR code.
+        """
+        order = self.get_object()
+
+        buffer = render_admin_receipt_pdf(order)
+        response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="order_receipt_{order.id}.pdf"'
         return response
 
     @action(detail=False, methods=["get"], permission_classes=[permissions.IsAdminUser])

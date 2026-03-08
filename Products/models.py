@@ -42,7 +42,7 @@ class Category(SoftDeleteModel):
 class ProductUnit(models.TextChoices):
     PIECE = "piece", _("Piece")
     KG = "kg", _("Kg")
-    PACKET = "packet", _("Packet")
+    G = "Gram", _("g")
 
 
 class Product(SoftDeleteModel):

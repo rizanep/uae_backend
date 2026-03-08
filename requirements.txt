@@ -39,3 +39,4 @@ django-filter
 reportlab
 django-redis
 twilio
+qrcode[pil]
