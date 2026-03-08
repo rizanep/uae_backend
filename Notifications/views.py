@@ -4,8 +4,6 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.utils import timezone
 from django.contrib.auth import get_user_model
-from django.core.mail import send_mail
-from django.conf import settings
 from Users.permissions import IsAdmin
 from .models import Notification, Broadcast, NotificationTemplate, NotificationType, ContactMessage
 from .serializers import (
@@ -146,6 +144,7 @@ class ContactMessageViewSet(viewsets.ModelViewSet):
         """
         Only authenticated users with verified email can send messages.
         Messages are automatically associated with the user's name and email.
+        Creates notifications for all admin users.
         """
         if not request.user.is_email_verified:
             return Response(
@@ -160,37 +159,24 @@ class ContactMessageViewSet(viewsets.ModelViewSet):
         user_name = request.user.get_full_name() or request.user.email
         serializer.validated_data['name'] = user_name
         serializer.validated_data['email'] = request.user.email
+        serializer.validated_data['user'] = request.user
         
         self.perform_create(serializer)
 
-        # Send Email to Admin
+        # Create notifications for all admin users
         contact_msg = serializer.instance
-        subject = f"New Contact Message: {contact_msg.subject}"
-        message = f"""
-You have received a new message from the contact form.
-
-Name: {contact_msg.name}
-Email: {contact_msg.email}
-Subject: {contact_msg.subject}
-
-Message:
-{contact_msg.message}
-        """
-
-        # Send from DEFAULT_FROM_EMAIL to DEFAULT_FROM_EMAIL (Admin)
-        # Reply-to is set to the user's email
-        try:
-            send_mail(
-                subject,
-                message,
-                settings.DEFAULT_FROM_EMAIL,
-                [settings.DEFAULT_FROM_EMAIL],
-                fail_silently=False,
-                reply_to=[contact_msg.email]
+        User = get_user_model()
+        admin_users = User.objects.filter(role='admin', is_active=True)
+        
+        notifications = [
+            Notification(
+                user=admin,
+                title=f"New Contact Message from {contact_msg.name}",
+                message=f"Subject: {contact_msg.subject}\n\n{contact_msg.message[:100]}..."
             )
-        except Exception as e:
-            # Log error but don't fail the request if DB save was successful
-            print(f"Error sending contact email to admin: {e}")
+            for admin in admin_users
+        ]
+        Notification.objects.bulk_create(notifications)
 
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)

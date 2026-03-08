@@ -76,6 +76,7 @@ class ContactMessage(TimestampedModel):
     """
     Stores 'Contact Us' messages from users.
     """
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="contact_messages", null=True, blank=True)
     name = models.CharField(_("full name"), max_length=255)
     email = models.EmailField(_("email address"))
     subject = models.CharField(_("subject"), max_length=255)
