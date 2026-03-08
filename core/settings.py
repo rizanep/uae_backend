@@ -170,6 +170,43 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
     'PAGE_SIZE': 20,
+    
+    # ========================================================================
+    # RATE LIMITING / THROTTLING CONFIGURATION
+    # ========================================================================
+    # Default throttle classes applied to all endpoints
+    'DEFAULT_THROTTLE_CLASSES': [
+        'core.throttling.CombinedGeneralThrottle',
+    ],
+    
+    # Rate limit configurations (format: 'num_requests/time_period')
+    # Time periods: second, minute, hour, day
+    'DEFAULT_THROTTLE_RATES': {
+        # General API endpoints
+        'user_general': '1000/hour',
+        'anon_general': '200/hour',
+        
+        # Authentication operations
+        'user_auth': '50/hour',
+        'anon_auth': '30/hour',
+        
+        # OTP operations (very strict - brute force protection)
+        'anon_otp': '5/hour',
+        
+        # Order operations
+        'user_order': '100/hour',
+        
+        # Payment operations (very strict - fraud prevention)
+        'user_payment': '30/hour',
+        
+        # Review/Rating operations
+        'user_review': '20/hour',
+        
+        # Contact/Support messages (very strict)
+        'user_contact': '10/hour',
+        'anon_contact': '3/hour',
+    },
+    # ========================================================================
 }
 
 # SimpleJWT basic settings

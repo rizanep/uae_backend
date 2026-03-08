@@ -1,5 +1,5 @@
 from rest_framework import viewsets, permissions, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, throttle_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
@@ -20,6 +20,11 @@ from .serializers import (
     OTPRequestSerializer, OTPLoginSerializer, VerifyNewContactSerializer
 )
 from .permissions import IsOwnerOrAdmin, IsAdmin
+from core.rate_limit_utils import throttle_auth_view, throttle_otp_view
+from core.throttling import (
+    UserAuthThrottle, AnonAuthThrottle,
+    UserGeneralThrottle, AnonGeneralThrottle
+)
 
 # Cookie settings
 COOKIE_ACCESS_NAME = 'access_token'
@@ -121,9 +126,13 @@ class UserViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(request.user)
         return Response(serializer.data)
     
+    @throttle_classes([UserAuthThrottle(), AnonAuthThrottle()])
     @action(detail=False, methods=['post'])
     def change_password(self, request):
-        """Change user password"""
+        """
+        Change user password.
+        Rate limited: 50 requests/hour for users
+        """
         user = request.user
         serializer = ChangePasswordSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -303,11 +312,14 @@ class RefreshView(TokenRefreshView):
         return response
 
 
+@throttle_auth_view
 class LogoutView(APIView):
     """
     Logout view
     - Blacklists refresh token
     - Clears auth cookies
+    
+    Rate limited: 50 requests/hour (user_auth throttle)
     """
     permission_classes = [permissions.AllowAny]
     
@@ -331,12 +343,15 @@ class LogoutView(APIView):
         return response
 
 
+@throttle_auth_view
 class GoogleAuthCallbackView(APIView):
     """
     Google OAuth callback handler
     - Exchange authorization code for tokens
     - Create/update user
     - Issue JWT tokens
+    
+    Rate limited: 30 requests/hour per IP for anonymous, 50/hour for users
     """
     permission_classes = [permissions.AllowAny]
 
@@ -499,7 +514,14 @@ class GoogleAuthCallbackView(APIView):
             )
 
 
+@throttle_otp_view
 class OTPRequestView(APIView):
+    """
+    Request OTP for authentication.
+    Very strict rate limiting to prevent OTP spam.
+    
+    Rate limited: 5 requests/hour per IP
+    """
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
@@ -547,7 +569,14 @@ class OTPRequestView(APIView):
         )
 
 
+@throttle_otp_view
 class OTPLoginView(APIView):
+    """
+    Login with OTP verification.
+    Very strict rate limiting to prevent brute force OTP guessing.
+    
+    Rate limited: 5 requests/hour per IP
+    """
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
@@ -632,7 +661,14 @@ class OTPLoginView(APIView):
             return Response({'detail': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+@throttle_auth_view
 class VerifyNewContactView(APIView):
+    """
+    Verify and update new contact information (email/phone).
+    Rate limited to authenticated users.
+    
+    Rate limited: 50 requests/hour for users
+    """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):

@@ -1,5 +1,5 @@
 from rest_framework import viewsets, status, permissions
-from rest_framework.decorators import action
+from rest_framework.decorators import action, throttle_classes
 from rest_framework.response import Response
 from django.db import transaction
 from django.db.models import Count, Sum, Avg, F
@@ -17,6 +17,7 @@ from Reviews.models import Review
 from .payment_service import TelrPaymentService
 from .receipt_templates import render_receipt_image, render_receipt_pdf, render_admin_receipt_pdf
 from .utils import calculate_delivery_estimate, get_earliest_delivery_date
+from core.throttling import UserOrderThrottle, UserPaymentThrottle, AnonGeneralThrottle
 import re
 
 class OrderViewSet(viewsets.ModelViewSet):
@@ -38,12 +39,15 @@ class OrderViewSet(viewsets.ModelViewSet):
             return qs
         return qs.filter(user=user)
 
+    @throttle_classes([UserOrderThrottle(), AnonGeneralThrottle()])
     @action(detail=False, methods=["post"])
     @transaction.atomic
     def checkout(self, request):
         """
         Create an order from the current user's cart.
         Validates stock and calculates totals within an atomic transaction.
+        
+        Rate limited: 100 requests/hour for users
         """
         user = request.user
         
@@ -200,6 +204,7 @@ class OrderViewSet(viewsets.ModelViewSet):
 
         return Response({"message": f"Order status updated to {new_status}."})
 
+    @throttle_classes([UserPaymentThrottle(), AnonGeneralThrottle()])
     @action(detail=True, methods=["post"])
     @transaction.atomic
     def verify_payment(self, request, pk=None):
@@ -207,6 +212,8 @@ class OrderViewSet(viewsets.ModelViewSet):
         Simulate payment verification.
         In production, this would be a webhook from Telr.
         Updates payment status, order status, and reduces product stock.
+        
+        Rate limited: 30 requests/hour for users (fraud prevention)
         """
         order = self.get_object()
         payment = getattr(order, "payment", None)

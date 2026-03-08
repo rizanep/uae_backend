@@ -18,6 +18,7 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from core.rate_limit_monitoring import RateLimitStatusAPI, RateLimitStatsAPI
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -28,6 +29,10 @@ urlpatterns = [
     path('api/reviews/', include('Reviews.urls')),
     path('api/notifications/', include('Notifications.urls')),
     path('api/marketing/', include('Marketing.urls')),
+    
+    # Rate limiting monitoring endpoints (admin only)
+    path('api/admin/rate-limit/status/', RateLimitStatusAPI.as_view(), name='rate-limit-status'),
+    path('api/admin/rate-limit/stats/', RateLimitStatsAPI.as_view(), name='rate-limit-stats'),
 ]
 
 if settings.DEBUG:

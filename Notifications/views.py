@@ -1,10 +1,11 @@
 from rest_framework import viewsets, mixins, status, permissions
-from rest_framework.decorators import action
+from rest_framework.decorators import action, throttle_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from Users.permissions import IsAdmin
+from core.throttling import UserContactThrottle, AnonContactThrottle
 from .models import Notification, Broadcast, NotificationTemplate, NotificationType, ContactMessage
 from .serializers import (
     NotificationSerializer,
@@ -111,11 +112,19 @@ class BroadcastViewSet(viewsets.ModelViewSet):
 class ContactMessageViewSet(viewsets.ModelViewSet):
     """
     API for 'Contact Us' form.
-    - Authenticated users with verified emails can send messages
+    - Authenticated users with verified emails can send messages (rate limited: 10/hour)
+    - Anonymous users can send messages (rate limited: 3/hour)
     - Admin users can view all messages and reply to them via email
     """
     queryset = ContactMessage.objects.all().order_by("-created_at")
     serializer_class = ContactMessageSerializer
+
+    def get_throttles(self):
+        """Apply strict throttling for contact message creation to prevent spam"""
+        if self.action == 'create':
+            return [UserContactThrottle(), AnonContactThrottle()]
+        # Default throttling for other actions
+        return super().get_throttles()
 
     def get_permissions(self):
         """

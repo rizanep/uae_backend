@@ -1,8 +1,9 @@
 from rest_framework import viewsets, permissions
-from rest_framework.decorators import action
+from rest_framework.decorators import action, throttle_classes
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
 from django_filters.rest_framework import DjangoFilterBackend
+from core.throttling import UserReviewThrottle, AnonGeneralThrottle
 
 from .models import Review
 from .serializers import ReviewSerializer
@@ -28,8 +29,8 @@ class ReviewViewSet(viewsets.ModelViewSet):
         - Retrieve review
 
     Authenticated users:
-        - Create review
-        - Update/delete own review
+        - Create review (rate limited: 20/hour)
+        - Update/delete own review (rate limited: 20/hour)
 
     Admin:
         - Hide/show reviews
@@ -40,6 +41,13 @@ class ReviewViewSet(viewsets.ModelViewSet):
     parser_classes = [MultiPartParser, FormParser]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["product", "user", "rating"]
+
+    def get_throttles(self):
+        """Apply stricter throttling for write operations to prevent review spam"""
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [UserReviewThrottle(), AnonGeneralThrottle()]
+        # Default throttling for list/retrieve
+        return super().get_throttles()
 
     def get_queryset(self):
         queryset = Review.objects.select_related(
