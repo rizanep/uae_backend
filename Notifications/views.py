@@ -14,6 +14,7 @@ from .serializers import (
     NotificationTemplateSerializer,
     ContactMessageSerializer
 )
+from .tasks import send_contact_reply_email
 
 class NotificationViewSet(
     mixins.ListModelMixin,
@@ -197,7 +198,7 @@ Message:
     @action(detail=True, methods=["post"], permission_classes=[IsAdmin])
     def reply(self, request, pk=None):
         """
-        Admin can reply to a contact message via email.
+        Admin can reply to a contact message via email (asynchronous task).
         Sends reply to the user's email address who submitted the message.
         """
         contact_msg = self.get_object()
@@ -209,44 +210,15 @@ Message:
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Send reply email to the user
-        subject = f"Re: {contact_msg.subject}"
-        message = f"""
-Dear {contact_msg.name},
+        # Queue the email task to be processed asynchronously
+        mark_resolved = request.data.get('mark_resolved', False)
+        send_contact_reply_email.delay(
+            contact_message_id=contact_msg.id,
+            reply_message=reply_message,
+            mark_resolved=mark_resolved
+        )
 
-Thank you for contacting us. Here's our response to your message:
-
-Your original message:
-"{contact_msg.message}"
-
-Our reply:
-{reply_message}
-
-Best regards,
-Support Team
-        """
-
-        try:
-            send_mail(
-                subject,
-                message,
-                settings.DEFAULT_FROM_EMAIL,
-                [contact_msg.email],
-                fail_silently=False,
-            )
-
-            # Mark as resolved if requested
-            if request.data.get('mark_resolved', False):
-                contact_msg.is_resolved = True
-                contact_msg.save()
-
-            return Response(
-                {"detail": "Reply sent successfully to user email."},
-                status=status.HTTP_200_OK
-            )
-
-        except Exception as e:
-            return Response(
-                {"detail": f"Failed to send reply: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        return Response(
+            {"detail": "Reply is being sent. Email will be delivered shortly."},
+            status=status.HTTP_200_OK
+        )
