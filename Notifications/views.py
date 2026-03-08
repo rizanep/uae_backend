@@ -26,7 +26,7 @@ class NotificationViewSet(
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return Notification.objects.filter(user=self.request.user).order_by("-created_at")
+        return Notification.objects.filter(user=self.request.user).select_related('user').order_by("-created_at")
 
     @action(detail=False, methods=["post"])
     def mark_all_as_read(self, request):
@@ -48,7 +48,7 @@ class NotificationTemplateViewSet(viewsets.ModelViewSet):
 
 
 class BroadcastViewSet(viewsets.ModelViewSet):
-    queryset = Broadcast.objects.all().order_by("-created_at")
+    queryset = Broadcast.objects.select_related('template').prefetch_related('recipients').order_by("-created_at")
     serializer_class = BroadcastSerializer
     permission_classes = [IsAdmin]
 
@@ -60,11 +60,11 @@ class BroadcastViewSet(viewsets.ModelViewSet):
 
         User = get_user_model()
 
-        # Determine recipients
+        # Determine recipients (use values_list for optimization)
         if broadcast.send_to_all:
-            recipients = User.objects.all()
+            recipient_ids = User.objects.values_list('id', flat=True)
         else:
-            recipients = broadcast.recipients.all()
+            recipient_ids = broadcast.recipients.values_list('id', flat=True)
 
         # Resolve template defaults if provided
         template = broadcast.template
@@ -76,23 +76,28 @@ class BroadcastViewSet(viewsets.ModelViewSet):
 
         # Send notifications (mock for non IN_APP types)
         sent_count = 0
-        for user in recipients:
-            if notif_type == NotificationType.IN_APP:
-                Notification.objects.create(
-                    user=user,
+        if notif_type == NotificationType.IN_APP:
+            # Bulk create for IN_APP notifications (much faster)
+            notifications = [
+                Notification(
+                    user_id=user_id,
                     title=subject,
                     message=message,
                 )
-                sent_count += 1
-            elif notif_type == NotificationType.EMAIL:
-                print(f"Mock Sending Email to {user}: {subject}")
-                sent_count += 1
-            elif notif_type == NotificationType.SMS:
-                print(f"Mock Sending SMS to {user}: {message}")
-                sent_count += 1
-            elif notif_type == NotificationType.PUSH:
-                print(f"Mock Sending Push to {user}: {message}")
-                sent_count += 1
+                for user_id in recipient_ids
+            ]
+            Notification.objects.bulk_create(notifications, batch_size=1000)
+            sent_count = len(notifications)
+        else:
+            # For other types, still iterate but get user count only
+            sent_count = len(list(recipient_ids))
+            for user_id in recipient_ids:
+                if notif_type == NotificationType.EMAIL:
+                    print(f"Mock Sending Email to user {user_id}: {subject}")
+                elif notif_type == NotificationType.SMS:
+                    print(f"Mock Sending SMS to user {user_id}: {message}")
+                elif notif_type == NotificationType.PUSH:
+                    print(f"Mock Sending Push to user {user_id}: {message}")
 
         broadcast.is_sent = True
         broadcast.sent_at = timezone.now()
@@ -104,19 +109,43 @@ class BroadcastViewSet(viewsets.ModelViewSet):
         return Response({"detail": f"Broadcast sent to {sent_count} recipients."}, status=status.HTTP_200_OK)
 
 
-class ContactMessageViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
+class ContactMessageViewSet(viewsets.ModelViewSet):
     """
     API for 'Contact Us' form.
-    Only allows authenticated users with verified emails to send messages.
+    - Authenticated users with verified emails can send messages
+    - Admin users can view all messages and reply to them via email
     """
-    queryset = ContactMessage.objects.all()
+    queryset = ContactMessage.objects.all().order_by("-created_at")
     serializer_class = ContactMessageSerializer
-    permission_classes = [IsAuthenticated]
 
-    def perform_create(self, serializer, **kwargs):
-        serializer.save(**kwargs)
+    def get_permissions(self):
+        """
+        Different permissions for different actions:
+        - list/retrieve: Admin only
+        - create: Authenticated users only
+        - reply: Admin only
+        """
+        if self.action in ['list', 'retrieve']:
+            return [IsAdmin()]
+        elif self.action == 'reply':
+            return [IsAdmin()]
+        elif self.action == 'create':
+            return [IsAuthenticated()]
+        return [IsAuthenticated()]
+
+    def get_queryset(self):
+        """
+        Admin sees all messages, regular users see none (no list access for non-admins).
+        """
+        if self.request.user.role == 'admin':
+            return ContactMessage.objects.all().order_by("-created_at")
+        return ContactMessage.objects.none()
 
     def create(self, request, *args, **kwargs):
+        """
+        Only authenticated users with verified email can send messages.
+        Messages are automatically associated with the user's name and email.
+        """
         if not request.user.is_email_verified:
             return Response(
                 {"detail": "Your email must be verified to send a message."},
@@ -125,14 +154,16 @@ class ContactMessageViewSet(mixins.CreateModelMixin, viewsets.GenericViewSet):
 
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         # Auto-fill name and email from authenticated user
         user_name = request.user.get_full_name() or request.user.email
-        self.perform_create(serializer, name=user_name, email=request.user.email)
+        serializer.validated_data['name'] = user_name
+        serializer.validated_data['email'] = request.user.email
         
+        self.perform_create(serializer)
+
         # Send Email to Admin
         contact_msg = serializer.instance
-        
         subject = f"New Contact Message: {contact_msg.subject}"
         message = f"""
 You have received a new message from the contact form.
@@ -144,7 +175,7 @@ Subject: {contact_msg.subject}
 Message:
 {contact_msg.message}
         """
-        
+
         # Send from DEFAULT_FROM_EMAIL to DEFAULT_FROM_EMAIL (Admin)
         # Reply-to is set to the user's email
         try:
@@ -152,13 +183,70 @@ Message:
                 subject,
                 message,
                 settings.DEFAULT_FROM_EMAIL,
-                [settings.DEFAULT_FROM_EMAIL], 
+                [settings.DEFAULT_FROM_EMAIL],
                 fail_silently=False,
                 reply_to=[contact_msg.email]
             )
         except Exception as e:
             # Log error but don't fail the request if DB save was successful
-            print(f"Error sending contact email: {e}")
+            print(f"Error sending contact email to admin: {e}")
 
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAdmin])
+    def reply(self, request, pk=None):
+        """
+        Admin can reply to a contact message via email.
+        Sends reply to the user's email address who submitted the message.
+        """
+        contact_msg = self.get_object()
+        reply_message = request.data.get('reply_message')
+
+        if not reply_message:
+            return Response(
+                {"detail": "Reply message is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Send reply email to the user
+        subject = f"Re: {contact_msg.subject}"
+        message = f"""
+Dear {contact_msg.name},
+
+Thank you for contacting us. Here's our response to your message:
+
+Your original message:
+"{contact_msg.message}"
+
+Our reply:
+{reply_message}
+
+Best regards,
+Support Team
+        """
+
+        try:
+            send_mail(
+                subject,
+                message,
+                settings.DEFAULT_FROM_EMAIL,
+                [contact_msg.email],
+                fail_silently=False,
+            )
+
+            # Mark as resolved if requested
+            if request.data.get('mark_resolved', False):
+                contact_msg.is_resolved = True
+                contact_msg.save()
+
+            return Response(
+                {"detail": "Reply sent successfully to user email."},
+                status=status.HTTP_200_OK
+            )
+
+        except Exception as e:
+            return Response(
+                {"detail": f"Failed to send reply: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

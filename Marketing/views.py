@@ -69,8 +69,8 @@ class CouponViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         # Users see their own assigned coupons
         user = self.request.user
-        qs = Coupon.objects.filter(assigned_user=user, deleted_at__isnull=True)
-        return qs.order_by("-created_at")
+        qs = Coupon.objects.filter(assigned_user=user, deleted_at__isnull=True).select_related('assigned_user').order_by("-created_at")
+        return qs
 
     @action(detail=False, methods=['post'], serializer_class=ApplyReferralSerializer)
     def apply_referral(self, request):

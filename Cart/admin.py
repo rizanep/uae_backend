@@ -12,9 +12,17 @@ class CartAdmin(admin.ModelAdmin):
     search_fields = ["user__email", "user__phone_number"]
     inlines = [CartItemInline]
     readonly_fields = ["created_at", "updated_at"]
+    
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        return queryset.select_related('user')
 
 @admin.register(CartItem)
 class CartItemAdmin(admin.ModelAdmin):
     list_display = ["cart", "product", "quantity", "subtotal", "created_at"]
     list_filter = ["created_at"]
     search_fields = ["cart__user__email", "product__name"]
+    
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        return queryset.select_related('cart', 'product', 'cart__user')

@@ -33,7 +33,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Order.objects.none()
         qs = Order.objects.select_related(
             "user", "shipping_address", "payment", "payment__receipt"
-        ).prefetch_related("items", "status_history")
+        ).prefetch_related("items", "items__product", "status_history")
         if user.role == "admin":
             return qs
         return qs.filter(user=user)
@@ -46,6 +46,14 @@ class OrderViewSet(viewsets.ModelViewSet):
         Validates stock and calculates totals within an atomic transaction.
         """
         user = request.user
+        
+        # Validate phone verification
+        if not user.phone_number or not user.is_phone_verified:
+            return Response(
+                {"error": "Only verified users with a phone number can purchase products. Please verify your phone number to continue."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         address_id = request.data.get("address_id")
         delivery_date = request.data.get("preferred_delivery_date")
         delivery_slot = request.data.get("preferred_delivery_slot")

@@ -97,7 +97,7 @@ class ProductFilter(django_filters.FilterSet):
         fields = ["category", "category_slug", "is_available", "min_price", "max_price"]
 
 class ProductViewSet(viewsets.ModelViewSet):
-    queryset = Product.objects.filter(deleted_at__isnull=True, is_available=True)
+    queryset = Product.objects.filter(deleted_at__isnull=True, is_available=True).select_related('category').prefetch_related('images', 'videos', 'discount_tiers', 'delivery_tiers')
     serializer_class = ProductSerializer
     permission_classes = [IsAdminOrReadOnly]
     filter_backends = [filters.SearchFilter, django_filters.DjangoFilterBackend, filters.OrderingFilter]
@@ -145,14 +145,14 @@ class ProductViewSet(viewsets.ModelViewSet):
         return result
 
 class ProductImageViewSet(viewsets.ModelViewSet):
-    queryset = ProductImage.objects.all()
+    queryset = ProductImage.objects.select_related('product')
     serializer_class = ProductImageSerializer
     permission_classes = [IsAdminOrReadOnly]
     filter_backends = [django_filters.DjangoFilterBackend]
     filterset_fields = ["product"]
 
 class ProductVideoViewSet(viewsets.ModelViewSet):
-    queryset = ProductVideo.objects.all()
+    queryset = ProductVideo.objects.select_related('product')
     serializer_class = ProductVideoSerializer
     permission_classes = [IsAdminOrReadOnly]
     filter_backends = [django_filters.DjangoFilterBackend]
@@ -163,7 +163,7 @@ class ProductDeliveryTierViewSet(viewsets.ModelViewSet):
     API for managing product delivery tiers.
     Admins can add/edit/delete tiers.
     """
-    queryset = ProductDeliveryTier.objects.all()
+    queryset = ProductDeliveryTier.objects.select_related('product')
     serializer_class = ProductDeliveryTierSerializer
     permission_classes = [permissions.IsAdminUser]
     filter_backends = [django_filters.DjangoFilterBackend]
@@ -174,7 +174,7 @@ class ProductDiscountTierViewSet(viewsets.ModelViewSet):
     API for managing product discount tiers.
     Admins can add/edit/delete tiers.
     """
-    queryset = ProductDiscountTier.objects.all()
+    queryset = ProductDiscountTier.objects.select_related('product')
     serializer_class = ProductDiscountTierSerializer
     permission_classes = [permissions.IsAdminUser]
     filter_backends = [django_filters.DjangoFilterBackend]

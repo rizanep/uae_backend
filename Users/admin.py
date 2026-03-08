@@ -57,3 +57,7 @@ class UserAddressAdmin(admin.ModelAdmin):
     list_display = ('user', 'full_name', 'address_type', 'city', 'emirate', 'is_default')
     list_filter = ('address_type', 'emirate', 'is_default')
     search_fields = ('user__email', 'full_name', 'city')
+    
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        return queryset.select_related('user')

@@ -27,6 +27,10 @@ class OrderAdmin(admin.ModelAdmin):
     inlines = [OrderItemInline, OrderStatusHistoryInline, PaymentInline]
     readonly_fields = ["total_amount", "created_at", "updated_at"]
     
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        return queryset.select_related('user', 'shipping_address', 'payment')
+    
     fieldsets = (
         ("Order Info", {
             "fields": ("user", "status", "total_amount", "created_at", "updated_at", "tip_amount")
@@ -42,9 +46,17 @@ class PaymentAdmin(admin.ModelAdmin):
     list_display = ["order", "transaction_id", "amount", "status", "created_at"]
     list_filter = ["status", "payment_method"]
     search_fields = ["transaction_id", "telr_reference", "order__id"]
+    
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        return queryset.select_related('order', 'receipt')
 
 
 @admin.register(Receipt)
 class ReceiptAdmin(admin.ModelAdmin):
     list_display = ["receipt_number", "payment", "generated_at"]
     search_fields = ["receipt_number", "payment__transaction_id"]
+    
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        return queryset.select_related('payment')

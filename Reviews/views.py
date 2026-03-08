@@ -44,7 +44,7 @@ class ReviewViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = Review.objects.select_related(
             "user", "product"
-        ).prefetch_related("images")
+        ).prefetch_related("images", "product__category")
 
         if self.request.user.is_staff:
             return queryset

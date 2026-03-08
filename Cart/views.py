@@ -10,6 +10,10 @@ from Products.models import Product
 from Products.delivery_models import ProductDeliveryTier
 from Reviews.models import Review
 
+# Optimize ProductDeliveryTier queryset for prefetch
+def get_optimized_delivery_tiers():
+    return ProductDeliveryTier.objects.all().order_by('-min_quantity')
+
 class CartViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing the user's shopping cart.
@@ -94,7 +98,7 @@ class CartViewSet(viewsets.ModelViewSet):
         3. Generate available dates starting from today + max_lead_time.
         """
         cart = self.get_object()
-        items = cart.items.all()
+        items = cart.items.select_related('product').prefetch_related('product__delivery_tiers').all()
         
         if not items.exists():
             return Response(
@@ -107,20 +111,18 @@ class CartViewSet(viewsets.ModelViewSet):
         today = timezone.now().date()
         
         for item in items:
-            # Find applicable tier:
-            # Get tiers with min_quantity <= item.quantity, order by min_quantity desc (highest matching tier first)
-            tier = ProductDeliveryTier.objects.filter(
-                product=item.product, 
-                min_quantity__lte=item.quantity
-            ).order_by('-min_quantity').first()
+            # Find applicable tier (use prefetched data)
+            tier = None
+            for t in item.product.delivery_tiers.all():
+                if t.min_quantity <= item.quantity:
+                    tier = t
+                    break
             
             if tier:
                 lead_days = tier.delivery_days
                 reason = f"Tier: Qty >= {tier.min_quantity}"
             else:
-                # Default logic if no tier matches:
-                # 1. Check if product has a default lead time (future improvement)
-                # 2. Use global default (e.g., 1 day)
+                # Default logic if no tier matches
                 lead_days = 1 
                 reason = "Default (No matching tier)"
                 

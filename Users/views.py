@@ -64,8 +64,8 @@ class UserViewSet(viewsets.ModelViewSet):
         """Filter queryset based on user role"""
         user = self.request.user
         if user.is_authenticated and user.role == 'admin':
-            return User.objects.filter(deleted_at__isnull=True).select_related("profile")
-        return User.objects.filter(id=user.id, deleted_at__isnull=True).select_related("profile")
+            return User.objects.filter(deleted_at__isnull=True).select_related("profile").prefetch_related("addresses", "orders")
+        return User.objects.filter(id=user.id, deleted_at__isnull=True).select_related("profile").prefetch_related("addresses")
     
     def create(self, request, *args, **kwargs):
         """Create a new user (registration)"""

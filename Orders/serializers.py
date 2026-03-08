@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import Order, OrderItem, OrderStatusHistory, Payment, Receipt
-from Users.serializers import UserAddressSerializer
+from Users.serializers import UserAddressSerializer, UserSerializer
 
 class OrderStatusHistorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -62,5 +62,6 @@ class OrderSerializer(serializers.ModelSerializer):
             "payment",
             "created_at",
             "updated_at",
+            "user"
         ]
-        read_only_fields = ["id", "status", "total_amount", "tip_amount", "created_at", "updated_at"]
+        read_only_fields = ["id","user", "status", "total_amount", "tip_amount", "created_at", "updated_at"]

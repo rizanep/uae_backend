@@ -30,7 +30,7 @@ class Review(SoftDeleteModel):
     comment = models.TextField(_("comment"), blank=True)
     is_visible = models.BooleanField(
         _("is visible"), 
-        default=True,
+        default=False,
         help_text=_("Admins can uncheck this to hide the review")
     )
     admin_response = models.TextField(_("admin response"), blank=True, null=True)

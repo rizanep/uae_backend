@@ -199,6 +199,7 @@ def render_admin_receipt_pdf(order):
         address = order.shipping_address
         lines = [
             address.full_name,
+            address.phone_number,
             address.street_address,
             address.area or "",
             f"{address.city}, {address.emirate.upper()}",

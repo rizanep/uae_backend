@@ -12,6 +12,10 @@ class ReviewAdmin(admin.ModelAdmin):
     search_fields = ["product__name", "user__email", "comment"]
     actions = ["make_visible", "hide_reviews"]
     inlines = [ReviewImageInline]
+    
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        return queryset.select_related('product', 'user').prefetch_related('images')
 
     def make_visible(self, request, queryset):
         queryset.update(is_visible=True)
