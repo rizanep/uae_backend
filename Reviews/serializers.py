@@ -42,6 +42,16 @@ class ReviewSerializer(serializers.ModelSerializer):
             "created_at",
         ]
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        # Allow admin users to edit admin_response and is_visible
+        request = self.context.get('request')
+        if request and request.user and request.user.is_staff:
+            # Remove these from read_only for admins
+            self.fields['admin_response'].read_only = False
+            self.fields['is_visible'].read_only = False
+
     def create(self, validated_data):
         user = self.context['request'].user
         product = validated_data['product']
