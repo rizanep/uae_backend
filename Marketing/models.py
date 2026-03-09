@@ -52,10 +52,10 @@ class MarketingMedia(SoftDeleteModel):
         blank=True,
         help_text=_("Tag for categorizing/filtering media (e.g. 'summer', 'sale', 'new')"),
     )
-    highlight = models.BooleanField(
+    highlight = models.TextField(
         _("highlight"),
-        default=False,
-        help_text=_("Mark as highlighted to feature prominently"),
+        blank=True,
+        help_text=_("Highlight text or badge to display on media"),
     )
     cta = models.CharField(
         _("call to action"),
