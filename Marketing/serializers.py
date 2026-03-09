@@ -19,6 +19,9 @@ class MarketingMediaSerializer(serializers.ModelSerializer):
             "start_at",
             "end_at",
             "sort_order",
+            "tag",
+            "highlight",
+            "cta",
             "created_at",
             "updated_at",
         ]

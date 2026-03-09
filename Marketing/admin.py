@@ -17,14 +17,16 @@ class MarketingMediaAdmin(admin.ModelAdmin):
         "key",
         "position",
         "title",
+        "highlight",
+        "tag",
         "is_active",
         "start_at",
         "end_at",
         "deleted_at",
         "sort_order",
     )
-    list_filter = ("position", "is_active", "start_at", "end_at")
-    search_fields = ("key", "title", "subtitle", "description")
+    list_filter = ("position", "is_active", "highlight", "start_at", "end_at")
+    search_fields = ("key", "title", "subtitle", "description", "tag", "cta")
     ordering = ("sort_order", "-created_at")
     readonly_fields = ("created_at", "updated_at", "deleted_at")
     actions = [soft_delete_selected, restore_selected]
@@ -41,6 +43,13 @@ class MarketingMediaAdmin(admin.ModelAdmin):
                 "image_desktop",
                 "is_active",
                 "sort_order",
+            )
+        }),
+        ("Marketing", {
+            "fields": (
+                "tag",
+                "highlight",
+                "cta",
             )
         }),
         ("Schedule", {

@@ -45,6 +45,24 @@ class MarketingMedia(SoftDeleteModel):
     start_at = models.DateTimeField(_("start at"), blank=True, null=True)
     end_at = models.DateTimeField(_("end at"), blank=True, null=True)
     sort_order = models.PositiveIntegerField(_("sort order"), default=0)
+    
+    tag = models.CharField(
+        _("tag"),
+        max_length=100,
+        blank=True,
+        help_text=_("Tag for categorizing/filtering media (e.g. 'summer', 'sale', 'new')"),
+    )
+    highlight = models.BooleanField(
+        _("highlight"),
+        default=False,
+        help_text=_("Mark as highlighted to feature prominently"),
+    )
+    cta = models.CharField(
+        _("call to action"),
+        max_length=255,
+        blank=True,
+        help_text=_("Call-to-action text or link (e.g. 'Shop Now', 'Learn More', '/products/sale')"),
+    )
 
     class Meta:
         verbose_name = _("Marketing Media")
