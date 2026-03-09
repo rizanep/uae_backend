@@ -21,31 +21,10 @@ logger = logging.getLogger(__name__)
 
 class BaseCustomThrottle:
     """
-    Base throttle class with logging and monitoring capabilities.
+    Base throttle marker class for shared configuration.
+    Provides common THROTTLE_RATES definition.
     """
     THROTTLE_RATES = {}
-
-    def throttle_success(self, request, view):
-        """Log successful request"""
-        try:
-            logger.debug(
-                f"Throttle allowed: {self.__class__.__name__} - "
-                f"User: {getattr(request.user, 'id', 'anonymous')} - "
-                f"Path: {request.path}"
-            )
-        except Exception as e:
-            logger.warning(f"Error logging throttle success: {e}")
-        return super().throttle_success(request, view)
-
-    def throttle_failure(self, request, view):
-        """Log throttle violations"""
-        logger.warning(
-            f"Rate limit exceeded: {self.__class__.__name__} - "
-            f"User: {getattr(request.user, 'id', 'anonymous')} - "
-            f"IP: {self.get_ident(request)} - "
-            f"Path: {request.path}"
-        )
-        return super().throttle_failure(request, view)
 
 
 # ============================================================================

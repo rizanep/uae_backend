@@ -132,9 +132,9 @@ def throttle_auth_view(view_class):
     
     Use for: Login, register, token refresh, password reset
     """
-    from core.throttling import CombinedAuthThrottle
+    from core.throttling import UserAuthThrottle, AnonAuthThrottle
     
-    return throttle_classes([CombinedAuthThrottle])(view_class)
+    return throttle_classes([UserAuthThrottle, AnonAuthThrottle])(view_class)
 
 
 def throttle_otp_view(view_class):
@@ -143,9 +143,9 @@ def throttle_otp_view(view_class):
     
     Use for: OTP request, OTP verification
     """
-    from core.throttling import CombinedOTPThrottle
+    from core.throttling import UserAuthThrottle, AnonOTPThrottle
     
-    return throttle_classes([CombinedOTPThrottle])(view_class)
+    return throttle_classes([UserAuthThrottle, AnonOTPThrottle])(view_class)
 
 
 def throttle_payment_view(view_class):
@@ -154,9 +154,9 @@ def throttle_payment_view(view_class):
     
     Use for: Payment initiation, payment verification, refunds
     """
-    from core.throttling import CombinedPaymentThrottle
+    from core.throttling import UserPaymentThrottle, AnonGeneralThrottle
     
-    return throttle_classes([CombinedPaymentThrottle])(view_class)
+    return throttle_classes([UserPaymentThrottle, AnonGeneralThrottle])(view_class)
 
 
 def throttle_order_view(view_class):
@@ -165,9 +165,9 @@ def throttle_order_view(view_class):
     
     Use for: Order creation, order modification
     """
-    from core.throttling import CombinedOrderThrottle
+    from core.throttling import UserOrderThrottle, AnonGeneralThrottle
     
-    return throttle_classes([CombinedOrderThrottle])(view_class)
+    return throttle_classes([UserOrderThrottle, AnonGeneralThrottle])(view_class)
 
 
 def throttle_review_view(view_class):
@@ -176,9 +176,9 @@ def throttle_review_view(view_class):
     
     Use for: Create review, update review
     """
-    from core.throttling import CombinedReviewThrottle
+    from core.throttling import UserReviewThrottle, AnonGeneralThrottle
     
-    return throttle_classes([CombinedReviewThrottle])(view_class)
+    return throttle_classes([UserReviewThrottle, AnonGeneralThrottle])(view_class)
 
 
 def throttle_contact_view(view_class):
@@ -187,9 +187,9 @@ def throttle_contact_view(view_class):
     
     Use for: Contact form submission, support tickets
     """
-    from core.throttling import CombinedContactThrottle
+    from core.throttling import UserContactThrottle, AnonContactThrottle
     
-    return throttle_classes([CombinedContactThrottle])(view_class)
+    return throttle_classes([UserContactThrottle, AnonContactThrottle])(view_class)
 
 
 def throttle_action(scope):
@@ -209,18 +209,18 @@ def throttle_action(scope):
         # Get the throttle class for this scope
         from core import throttling
         
-        # Map scopes to throttle classes
+        # Map scopes to throttle classes (not instances!)
         scope_map = {
-            'user_auth': [throttling.UserAuthThrottle(), throttling.AnonAuthThrottle()],
-            'user_order': [throttling.UserOrderThrottle(), throttling.AnonGeneralThrottle()],
-            'user_payment': [throttling.UserPaymentThrottle(), throttling.AnonGeneralThrottle()],
-            'user_review': [throttling.UserReviewThrottle(), throttling.AnonGeneralThrottle()],
-            'user_contact': [throttling.UserContactThrottle(), throttling.AnonContactThrottle()],
-            'anon_otp': [throttling.UserAuthThrottle(), throttling.AnonOTPThrottle()],
-            'user_general': [throttling.UserGeneralThrottle(), throttling.AnonGeneralThrottle()],
+            'user_auth': [throttling.UserAuthThrottle, throttling.AnonAuthThrottle],
+            'user_order': [throttling.UserOrderThrottle, throttling.AnonGeneralThrottle],
+            'user_payment': [throttling.UserPaymentThrottle, throttling.AnonGeneralThrottle],
+            'user_review': [throttling.UserReviewThrottle, throttling.AnonGeneralThrottle],
+            'user_contact': [throttling.UserContactThrottle, throttling.AnonContactThrottle],
+            'anon_otp': [throttling.UserAuthThrottle, throttling.AnonOTPThrottle],
+            'user_general': [throttling.UserGeneralThrottle, throttling.AnonGeneralThrottle],
         }
         
-        throttle_classes_list = scope_map.get(scope, [throttling.UserGeneralThrottle(), throttling.AnonGeneralThrottle()])
+        throttle_classes_list = scope_map.get(scope, [throttling.UserGeneralThrottle, throttling.AnonGeneralThrottle])
         
         @wraps(func)
         def wrapper(*args, **kwargs):

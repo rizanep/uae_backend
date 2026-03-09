@@ -64,7 +64,7 @@ class ReviewViewSet(viewsets.ModelViewSet):
             return [permissions.AllowAny()]
 
         if self.action == "create":
-            return [permissions.IsAuthenticated()]
+            return [permissions.AllowAny()]
 
         if self.action in ["update", "partial_update", "destroy"]:
             return [IsOwnerOrAdmin()]
