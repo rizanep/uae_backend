@@ -103,3 +103,19 @@ class ReviewViewSet(viewsets.ModelViewSet):
                 {"detail": "No review found for this product"}, 
                 status=404
             )
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAdminUser])
+    def toggle_visibility(self, request, pk=None):
+        """
+        Admin action to toggle review visibility.
+        Hidden reviews are not shown to regular users.
+        """
+        review = self.get_object()
+        review.is_visible = not review.is_visible
+        review.save()
+        
+        return Response({
+            "id": review.id,
+            "is_visible": review.is_visible,
+            "message": f"Review is now {'visible' if review.is_visible else 'hidden'}"
+        })
