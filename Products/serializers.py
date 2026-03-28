@@ -60,6 +60,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "image",
             "sku",
             "unit",
+            "available_emirates",
             "expected_delivery_time",
             "images",
             "videos",

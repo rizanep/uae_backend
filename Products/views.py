@@ -112,6 +112,9 @@ class ProductFilter(django_filters.FilterSet):
             models.FileField: {
                 "filter_class": django_filters.CharFilter,
             },
+            models.JSONField: {
+                "filter_class": django_filters.CharFilter,
+            },
         }
 
 class ProductViewSet(viewsets.ModelViewSet):

@@ -45,6 +45,21 @@ class ProductUnit(models.TextChoices):
     G = "Gram", _("g")
 
 
+DEFAULT_AVAILABLE_EMIRATES = [
+    "abu_dhabi",
+    "dubai",
+    "sharjah",
+    "ajman",
+    "umm_al_quwain",
+    "ras_al_khaimah",
+    "fujairah",
+]
+
+
+def default_available_emirates():
+    return DEFAULT_AVAILABLE_EMIRATES.copy()
+
+
 class Product(SoftDeleteModel):
     """
     Product model with professional ecommerce fields.
@@ -72,6 +87,7 @@ class Product(SoftDeleteModel):
     image = models.ImageField(_("main image"), upload_to="products/", blank=True, null=True)
     sku = models.CharField(_("SKU"), max_length=50, unique=True, blank=True)
     unit = models.CharField(_("unit"), max_length=20, choices=ProductUnit.choices, default=ProductUnit.PIECE)
+    available_emirates = models.JSONField(_("available emirates"), default=default_available_emirates)
     expected_delivery_time = models.CharField(
         _("expected delivery time"), 
         max_length=100, 
