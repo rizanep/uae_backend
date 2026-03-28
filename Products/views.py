@@ -2,6 +2,7 @@ from rest_framework import viewsets, permissions, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters import rest_framework as django_filters
+from django.db import models
 from django.db.models import Avg, Count, Q
 from django.core.cache import cache
 from django.conf import settings
@@ -45,7 +46,16 @@ class CategoryViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdminOrReadOnly]
     filter_backends = [filters.SearchFilter, django_filters.DjangoFilterBackend]
     search_fields = ["name", "description"]
-    filterset_fields = ["parent"]
+    filterset_fields = [
+        "id",
+        "created_at",
+        "updated_at",
+        "deleted_at",
+        "name",
+        "slug",
+        "description",
+        "parent",
+    ]
 
     def list(self, request, *args, **kwargs):
         if request.user and request.user.is_staff:
@@ -94,7 +104,15 @@ class ProductFilter(django_filters.FilterSet):
 
     class Meta:
         model = Product
-        fields = ["category", "category_slug", "is_available", "min_price", "max_price"]
+        fields = "__all__"
+        filter_overrides = {
+            models.ImageField: {
+                "filter_class": django_filters.CharFilter,
+            },
+            models.FileField: {
+                "filter_class": django_filters.CharFilter,
+            },
+        }
 
 class ProductViewSet(viewsets.ModelViewSet):
     queryset = Product.objects.filter(deleted_at__isnull=True, is_available=True).select_related('category').prefetch_related('images', 'videos', 'discount_tiers', 'delivery_tiers')
@@ -149,14 +167,14 @@ class ProductImageViewSet(viewsets.ModelViewSet):
     serializer_class = ProductImageSerializer
     permission_classes = [IsAdminOrReadOnly]
     filter_backends = [django_filters.DjangoFilterBackend]
-    filterset_fields = ["product"]
+    filterset_fields = ["id", "product", "is_feature", "created_at"]
 
 class ProductVideoViewSet(viewsets.ModelViewSet):
     queryset = ProductVideo.objects.select_related('product')
     serializer_class = ProductVideoSerializer
     permission_classes = [IsAdminOrReadOnly]
     filter_backends = [django_filters.DjangoFilterBackend]
-    filterset_fields = ["product"]
+    filterset_fields = ["id", "product", "video_url", "title", "created_at"]
 
 class ProductDeliveryTierViewSet(viewsets.ModelViewSet):
     """
@@ -167,7 +185,7 @@ class ProductDeliveryTierViewSet(viewsets.ModelViewSet):
     serializer_class = ProductDeliveryTierSerializer
     permission_classes = [permissions.IsAdminUser]
     filter_backends = [django_filters.DjangoFilterBackend]
-    filterset_fields = ["product"]
+    filterset_fields = "__all__"
 
 class ProductDiscountTierViewSet(viewsets.ModelViewSet):
     """
@@ -178,4 +196,4 @@ class ProductDiscountTierViewSet(viewsets.ModelViewSet):
     serializer_class = ProductDiscountTierSerializer
     permission_classes = [permissions.IsAdminUser]
     filter_backends = [django_filters.DjangoFilterBackend]
-    filterset_fields = ["product"]
+    filterset_fields = "__all__"

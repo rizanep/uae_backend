@@ -40,7 +40,7 @@ class ReviewViewSet(viewsets.ModelViewSet):
     serializer_class = ReviewSerializer
     parser_classes = [MultiPartParser, FormParser]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ["product", "user", "rating"]
+    filterset_fields = "__all__"
 
     def get_throttles(self):
         """Apply stricter throttling for write operations to prevent review spam"""

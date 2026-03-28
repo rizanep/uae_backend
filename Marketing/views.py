@@ -21,7 +21,15 @@ class IsAdminOrReadOnly(permissions.BasePermission):
 class MarketingMediaFilter(django_filters.FilterSet):
     class Meta:
         model = MarketingMedia
-        fields = ["key", "position", "is_active"]
+        fields = "__all__"
+        filter_overrides = {
+            models.ImageField: {
+                "filter_class": django_filters.CharFilter,
+            },
+            models.FileField: {
+                "filter_class": django_filters.CharFilter,
+            },
+        }
 
 
 class MarketingMediaViewSet(viewsets.ModelViewSet):
@@ -65,6 +73,8 @@ class MarketingMediaViewSet(viewsets.ModelViewSet):
 class CouponViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = CouponSerializer
     permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [django_filters.DjangoFilterBackend]
+    filterset_fields = "__all__"
 
     def get_queryset(self):
         # Users see their own assigned coupons

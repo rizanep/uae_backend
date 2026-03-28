@@ -1,4 +1,5 @@
 from rest_framework import viewsets, permissions
+from django_filters.rest_framework import DjangoFilterBackend
 from .models import UserAddress
 from .serializers import UserAddressSerializer
 
@@ -9,6 +10,8 @@ class UserAddressViewSet(viewsets.ModelViewSet):
     """
     serializer_class = UserAddressSerializer
     permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = "__all__"
 
     def get_queryset(self):
         return UserAddress.objects.filter(user=self.request.user).select_related('user')

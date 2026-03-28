@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action, throttle_classes
 from rest_framework.response import Response
+from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
 from django.db.models import Count, Sum, Avg, F
 from django.db.models.functions import TruncDate
@@ -27,6 +28,8 @@ class OrderViewSet(viewsets.ModelViewSet):
     """
     serializer_class = OrderSerializer
     permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = "__all__"
 
     def get_queryset(self):
         user = self.request.user

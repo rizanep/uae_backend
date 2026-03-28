@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+from django_filters.rest_framework import DjangoFilterBackend
 from Users.permissions import IsAdmin
 from core.throttling import UserContactThrottle, AnonContactThrottle
 from .models import Notification, Broadcast, NotificationTemplate, NotificationType, ContactMessage
@@ -45,12 +46,16 @@ class NotificationTemplateViewSet(viewsets.ModelViewSet):
     queryset = NotificationTemplate.objects.filter(deleted_at__isnull=True)
     serializer_class = NotificationTemplateSerializer
     permission_classes = [IsAdmin]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = "__all__"
 
 
 class BroadcastViewSet(viewsets.ModelViewSet):
     queryset = Broadcast.objects.select_related('template').prefetch_related('recipients').order_by("-created_at")
     serializer_class = BroadcastSerializer
     permission_classes = [IsAdmin]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = "__all__"
 
     @action(detail=True, methods=["post"])
     def send(self, request, pk=None):
@@ -118,6 +123,8 @@ class ContactMessageViewSet(viewsets.ModelViewSet):
     """
     queryset = ContactMessage.objects.all().order_by("-created_at")
     serializer_class = ContactMessageSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = "__all__"
 
     def get_throttles(self):
         """Apply strict throttling for contact message creation to prevent spam"""
