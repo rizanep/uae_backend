@@ -119,3 +119,25 @@ class ReviewViewSet(viewsets.ModelViewSet):
             "is_visible": review.is_visible,
             "message": f"Review is now {'visible' if review.is_visible else 'hidden'}"
         })
+
+    @action(detail=False, methods=["get"], permission_classes=[permissions.IsAdminUser])
+    def reviews_count(self, request):
+        """
+        Get a summary of review counts.
+        Returns: total reviews, average rating, visible, hidden.
+        """
+        from django.db.models import Avg
+        
+        reviews_qs = Review.objects.filter(deleted_at__isnull=True)
+        total_reviews = reviews_qs.count()
+        
+        avg_rating = reviews_qs.aggregate(avg=Avg("rating"))["avg"] or 0
+        visible = reviews_qs.filter(is_visible=True).count()
+        hidden = reviews_qs.filter(is_visible=False).count()
+        
+        return Response({
+            "total_reviews": total_reviews,
+            "avg_rating": float(avg_rating),
+            "visible": visible,
+            "hidden": hidden
+        })

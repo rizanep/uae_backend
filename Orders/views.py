@@ -29,7 +29,21 @@ class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = "__all__"
+    filterset_fields = [
+        "id",
+        "user",
+        "status",
+        "shipping_address",
+        "total_amount",
+        "tip_amount",
+        "preferred_delivery_date",
+        "preferred_delivery_slot",
+        "created_at",
+        "updated_at",
+        "payment__status",  # Payment status
+        "payment__payment_method",
+        "payment__amount",
+    ]
 
     def get_queryset(self):
         user = self.request.user
@@ -321,6 +335,31 @@ class OrderViewSet(viewsets.ModelViewSet):
         response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
         response["Content-Disposition"] = f'attachment; filename="order_receipt_{order.id}.pdf"'
         return response
+
+    @action(detail=False, methods=["get"], permission_classes=[permissions.IsAdminUser])
+    def orders_count(self, request):
+        """
+        Get a summary of order counts by status.
+        Returns: total orders, processing, shipped, delivered counts.
+        """
+        orders_qs = Order.objects.all()
+        total_orders = orders_qs.count()
+        
+        processing = orders_qs.filter(status=Order.OrderStatus.PROCESSING).count()
+        shipped = orders_qs.filter(status=Order.OrderStatus.SHIPPED).count()
+        delivered = orders_qs.filter(status=Order.OrderStatus.DELIVERED).count()
+        
+        total_revenue = Payment.objects.filter(status=Payment.PaymentStatus.SUCCESS).aggregate(
+            total=Sum("amount")
+        )["total"] or 0
+        
+        return Response({
+            "total_orders": total_orders,
+            "processing": processing,
+            "shipped": shipped,
+            "delivered": delivered,
+            "total_revenue": str(total_revenue)
+        })
 
     @action(detail=False, methods=["get"], permission_classes=[permissions.IsAdminUser])
     def dashboard_analytics(self, request):

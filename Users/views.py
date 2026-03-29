@@ -215,6 +215,26 @@ class UserViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK
         )
 
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAdminUser])
+    def users_count(self, request):
+        """
+        Get a summary of user counts by status.
+        Returns: total users, active, blocked/inactive, admins.
+        """
+        users_qs = User.objects.filter(deleted_at__isnull=True)
+        total_users = users_qs.count()
+        
+        active = users_qs.filter(is_active=True).count()
+        blocked = users_qs.filter(is_active=False).count()
+        admins = users_qs.filter(role='admin').count()
+        
+        return Response({
+            "total_users": total_users,
+            "active": active,
+            "blocked": blocked,
+            "admins": admins
+        })
+
 
 class LoginView(TokenObtainPairView):
     """

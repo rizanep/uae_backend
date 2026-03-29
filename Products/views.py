@@ -160,6 +160,26 @@ class ProductViewSet(viewsets.ModelViewSet):
         _bump_cache_version("catalog")
         return result
 
+    @action(detail=False, methods=["get"], permission_classes=[permissions.IsAdminUser])
+    def products_count(self, request):
+        """
+        Get a summary of product counts by status.
+        Returns: total products, active, out of stock, low stock.
+        """
+        products_qs = Product.objects.filter(deleted_at__isnull=True)
+        total_products = products_qs.count()
+        
+        active = products_qs.filter(is_available=True, stock__gt=0).count()
+        out_of_stock = products_qs.filter(stock=0).count()
+        low_stock = products_qs.filter(stock__gt=0, stock__lte=20).count()
+        
+        return Response({
+            "total_products": total_products,
+            "active": active,
+            "out_of_stock": out_of_stock,
+            "low_stock": low_stock
+        })
+
     def perform_destroy(self, instance):
         result = super().perform_destroy(instance)
         _bump_cache_version("catalog")
