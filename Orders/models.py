@@ -40,6 +40,17 @@ class Order(models.Model):
     )
     total_amount = models.DecimalField(_("total amount"), max_digits=12, decimal_places=2)
     tip_amount = models.DecimalField(_("tip amount"), max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    coupon = models.ForeignKey(
+        'Marketing.Coupon',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='orders',
+        verbose_name=_("coupon"),
+    )
+    coupon_code = models.CharField(_("coupon code"), max_length=50, blank=True, null=True)
+    discount_amount = models.DecimalField(_("discount amount"), max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    delivery_charge = models.DecimalField(_("delivery charge"), max_digits=10, decimal_places=2, default=Decimal("0.00"))
     
     # Delivery Preferences
     preferred_delivery_date = models.DateField(_("preferred delivery date"), blank=True, null=True)
@@ -192,3 +203,64 @@ class Receipt(models.Model):
     def generate_number(cls):
         """Generates a professional unique receipt number."""
         return f"REC-{uuid.uuid4().hex[:8].upper()}-{uuid.uuid4().hex[:4].upper()}"
+
+
+class DeliveryChargeConfig(models.Model):
+    """
+    Configuration for delivery charges.
+    Admin can manage delivery charge rules (threshold and charge amount).
+    There should only be one instance of this model.
+    """
+    min_free_shipping_amount = models.DecimalField(
+        _("minimum amount for free shipping"),
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("40.00"),
+        help_text=_("Orders >= this amount get free shipping. Default: AED 40")
+    )
+    delivery_charge = models.DecimalField(
+        _("delivery charge"),
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("10.00"),
+        help_text=_("Delivery charge for orders below min_free_shipping_amount. Default: AED 10")
+    )
+    is_active = models.BooleanField(
+        _("is active"),
+        default=True,
+        help_text=_("Enable/disable delivery charges")
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="delivery_configs"
+    )
+
+    class Meta:
+        verbose_name = _("Delivery Charge Configuration")
+        verbose_name_plural = _("Delivery Charge Configuration")
+
+    def __str__(self):
+        return f"Delivery Charges: Free above AED {self.min_free_shipping_amount}, Otherwise AED {self.delivery_charge}"
+
+    @classmethod
+    def get_config(cls):
+        """Get the active delivery charge configuration."""
+        config, _ = cls.objects.get_or_create(
+            pk=1,
+            defaults={
+                'min_free_shipping_amount': Decimal("40.00"),
+                'delivery_charge': Decimal("10.00"),
+                'is_active': True
+            }
+        )
+        return config
+
+    def save(self, *args, **kwargs):
+        # Only allow one instance
+        if not self.pk:
+            self.pk = 1
+        super().save(*args, **kwargs)

@@ -10,7 +10,7 @@ from django.http import HttpResponse
 from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
-from .models import Order, OrderItem, Payment, Receipt
+from .models import Order, OrderItem, Payment, Receipt, DeliveryChargeConfig
 from .serializers import OrderSerializer
 from Cart.models import Cart, CartItem
 from Users.models import UserAddress, User
@@ -18,6 +18,7 @@ from Reviews.models import Review
 from .payment_service import TelrPaymentService
 from .receipt_templates import render_receipt_image, render_receipt_pdf, render_admin_receipt_pdf
 from .utils import calculate_delivery_estimate, get_earliest_delivery_date
+from .coupon_service import validate_and_calculate_coupon, apply_coupon_to_order, get_delivery_charge
 from core.throttling import UserOrderThrottle, UserPaymentThrottle, AnonGeneralThrottle
 import re
 
@@ -58,6 +59,160 @@ class OrderViewSet(viewsets.ModelViewSet):
 
     @throttle_classes([UserOrderThrottle(), AnonGeneralThrottle()])
     @action(detail=False, methods=["post"])
+    def validate_coupon(self, request):
+        """
+        Validate a coupon code and calculate the discount amount.
+        Returns breakdown of discount for confirmation before checkout.
+        
+        Request body:
+        {
+            "coupon_code": "SAVE20",
+            "cart_total": 500.00
+        }
+        
+        Response:
+        {
+            "success": true,
+            "message": "Coupon 'SAVE20' is valid...",
+            "discount_amount": 100.00,
+            "discount_type": "percentage",
+            "discount_percentage": 20,
+            "cart_total": 500.00,
+            "final_amount": 400.00
+        }
+        
+        Rate limited: 100 requests/hour for users
+        """
+        user = request.user
+        coupon_code = request.data.get("coupon_code", "").upper().strip()
+        cart_total = Decimal(str(request.data.get("cart_total", 0)))
+        
+        if not coupon_code:
+            return Response(
+                {"error": "coupon_code is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if cart_total <= 0:
+            return Response(
+                {"error": "cart_total must be greater than 0."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate and calculate discount
+        result = validate_and_calculate_coupon(coupon_code, user, cart_total)
+        
+        response_data = {
+            "success": result['success'],
+            "message": result['message'],
+            "coupon_code": coupon_code,
+            "discount_amount": str(result['discount_amount']),
+            "discount_type": result['discount_type'],
+            "cart_total": str(cart_total),
+            "final_amount": str(result['final_amount'])
+        }
+        
+        # Add discount percentage if percentage type
+        if result['discount_type'] == 'percentage' and result['coupon']:
+            response_data['discount_percentage'] = float(result['coupon'].discount_value)
+        
+        status_code = status.HTTP_200_OK if result['success'] else status.HTTP_400_BAD_REQUEST
+        return Response(response_data, status=status_code)
+
+    @throttle_classes([UserOrderThrottle(), AnonGeneralThrottle()])
+    @action(detail=False, methods=["post"])
+    def checkout_summary(self, request):
+        """
+        Get order summary with all discounts and totals calculated.
+        This is a confirmation endpoint before final checkout.
+        
+        Request body:
+        {
+            "address_id": 1,
+            "coupon_code": "SAVE20",  (optional)
+            "tip_amount": 50,
+            "preferred_delivery_date": "2026-04-10",
+            "preferred_delivery_slot": "9AM-12PM"
+        }
+        
+        Response:
+        {
+            "success": true,
+            "cart_total_before_discount": "500.00",
+            "discount_amount": "100.00",
+            "discount_type": "percentage",
+            "discount_code": "SAVE20",
+            "cart_total_after_discount": "400.00",
+            "tip_amount": "50.00",
+            "final_total": "450.00"
+        }
+        
+        Rate limited: 100 requests/hour for users
+        """
+        user = request.user
+        
+        # Validate phone verification
+        if not user.phone_number or not user.is_phone_verified:
+            return Response(
+                {"error": "Only verified users with a phone number can purchase products."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        address_id = request.data.get("address_id")
+        coupon_code = request.data.get("coupon_code", "").upper().strip()
+        tip_amount = Decimal(str(request.data.get("tip_amount", 0)))
+        
+        # Validate address
+        address = get_object_or_404(UserAddress, id=address_id, user=user)
+        
+        # Get cart
+        try:
+            cart = Cart.objects.get(user=user)
+            cart_items = list(cart.items.select_related("product").prefetch_related("product__discount_tiers").all())
+            if not cart_items:
+                return Response({"error": "Cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
+        except Cart.DoesNotExist:
+            return Response({"error": "Cart not found."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Calculate cart total
+        cart_total_before = sum(cart_item.subtotal for cart_item in cart_items)
+        discount_amount = Decimal('0.00')
+        discount_type = None
+        cart_total_after = cart_total_before
+        
+        # Apply coupon if provided
+        coupon_message = None
+        if coupon_code:
+            coupon_result = validate_and_calculate_coupon(coupon_code, user, cart_total_before)
+            if coupon_result['success']:
+                discount_amount = coupon_result['discount_amount']
+                discount_type = coupon_result['discount_type']
+                cart_total_after = coupon_result['final_amount']
+            else:
+                coupon_message = f"Warning: {coupon_result['message']}"
+        
+        # Calculate delivery charge based on cart total after discount
+        delivery_charge = get_delivery_charge(cart_total_after)
+        
+        # Calculate final total (after discount + delivery charge + tip)
+        final_total = cart_total_after + delivery_charge + tip_amount
+        
+        return Response({
+            "success": True,
+            "cart_total_before_discount": str(cart_total_before),
+            "discount_amount": str(discount_amount),
+            "discount_type": discount_type,
+            "discount_code": coupon_code if coupon_code else None,
+            "coupon_message": coupon_message,
+            "cart_total_after_discount": str(cart_total_after),
+            "delivery_charge": str(delivery_charge),
+            "tip_amount": str(tip_amount),
+            "final_total": str(final_total),
+            "items_count": len(cart_items)
+        })
+
+    @throttle_classes([UserOrderThrottle(), AnonGeneralThrottle()])
+    @action(detail=False, methods=["post"])
     @transaction.atomic
     def checkout(self, request):
         """
@@ -81,6 +236,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         delivery_notes = request.data.get("delivery_notes")
         payment_method = request.data.get("payment_method", "TELR")
         tip_amount = Decimal(str(request.data.get("tip_amount", 0)))
+        coupon_code = request.data.get("coupon_code", "").upper().strip()
         
         if tip_amount < 0:
             return Response({"error": "Tip amount cannot be negative."}, status=status.HTTP_400_BAD_REQUEST)
@@ -128,13 +284,36 @@ class OrderViewSet(viewsets.ModelViewSet):
 
         # 4. Create Order
         cart_total = sum(cart_item.subtotal for cart_item in cart_items)
-        total_amount = cart_total + tip_amount
+        discount_amount = Decimal('0.00')
+        coupon = None
+        
+        # 4.5. Apply Coupon if provided
+        if coupon_code:
+            coupon_result = validate_and_calculate_coupon(coupon_code, user, cart_total)
+            if not coupon_result['success']:
+                return Response(
+                    {"error": f"Coupon error: {coupon_result['message']}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            discount_amount = coupon_result['discount_amount']
+            coupon = coupon_result['coupon']
+            cart_total = coupon_result['final_amount']
+        
+        # 4.6. Calculate Delivery Charge
+        delivery_charge = get_delivery_charge(cart_total)
+        
+        # 4.7. Calculate Final Total
+        total_amount = cart_total + delivery_charge + tip_amount
         
         order = Order.objects.create(
             user=user,
             shipping_address=address,
             total_amount=total_amount,
             tip_amount=tip_amount,
+            coupon=coupon,
+            coupon_code=coupon_code if coupon else None,
+            discount_amount=discount_amount,
+            delivery_charge=delivery_charge,
             status=Order.OrderStatus.PENDING,
             preferred_delivery_date=delivery_date,
             preferred_delivery_slot=delivery_slot,
@@ -198,6 +377,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         """
         Allows an admin to manually update the order status.
         Useful for marking orders as Shipped, Delivered, etc.
+        When status is changed to PAID, coupon usage is incremented (for COD orders).
         """
         order = self.get_object()
         new_status = request.data.get("status")
@@ -209,17 +389,23 @@ class OrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        old_status = order.status
         order.status = new_status
         order.save()
         
-        # We can also add custom notes to the history here if needed
-        # The signal handles the basic history, but we can update the notes of the latest entry
+        # Increment coupon usage if status changed to PAID and coupon exists (for COD orders)
+        if new_status == Order.OrderStatus.PAID and old_status != Order.OrderStatus.PAID and order.coupon:
+            order.coupon.used_count += 1
+            order.coupon.save()
+        
+        # Update status history notes
         latest_history = order.status_history.last()
         if latest_history and latest_history.status == new_status:
             latest_history.notes = notes
             latest_history.save()
 
         return Response({"message": f"Order status updated to {new_status}."})
+
 
     @throttle_classes([UserPaymentThrottle(), AnonGeneralThrottle()])
     @action(detail=True, methods=["post"])
@@ -251,7 +437,12 @@ class OrderViewSet(viewsets.ModelViewSet):
             payment.provider_response = verification_result
             payment.save()
 
-            # 2. Reduce Stock
+            # 2. Increment Coupon Usage Count if coupon was applied
+            if order.coupon:
+                order.coupon.used_count += 1
+                order.coupon.save()
+
+            # 3. Reduce Stock
             for item in order.items.all():
                 product = item.product
                 if product:
@@ -517,3 +708,75 @@ class OrderViewSet(viewsets.ModelViewSet):
             "max_delivery_days": max_days,
             "details": details
         })
+
+    @action(detail=False, methods=["get", "post"], permission_classes=[permissions.IsAdminUser])
+    def delivery_charge_settings(self, request):
+        """
+        Admin endpoint to view and configure delivery charge settings.
+        
+        GET: Retrieve current delivery charge configuration
+        POST: Update delivery charge configuration
+        
+        Request body (POST):
+        {
+            "min_free_shipping_amount": 40.00,
+            "delivery_charge": 10.00,
+            "is_active": true
+        }
+        
+        Response:
+        {
+            "min_free_shipping_amount": "40.00",
+            "delivery_charge": "10.00",
+            "is_active": true,
+            "message": "Configuration retrieved/updated successfully"
+        }
+        """
+        config = DeliveryChargeConfig.get_config()
+        
+        if request.method == "GET":
+            return Response({
+                "min_free_shipping_amount": str(config.min_free_shipping_amount),
+                "delivery_charge": str(config.delivery_charge),
+                "is_active": config.is_active,
+                "updated_at": config.updated_at,
+                "message": "Current delivery charge configuration"
+            })
+        
+        elif request.method == "POST":
+            # Update configuration
+            min_free = request.data.get("min_free_shipping_amount")
+            charge = request.data.get("delivery_charge")
+            is_active = request.data.get("is_active")
+            
+            if min_free is not None:
+                try:
+                    config.min_free_shipping_amount = Decimal(str(min_free))
+                except (ValueError, TypeError):
+                    return Response(
+                        {"error": "min_free_shipping_amount must be a valid decimal"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            if charge is not None:
+                try:
+                    config.delivery_charge = Decimal(str(charge))
+                except (ValueError, TypeError):
+                    return Response(
+                        {"error": "delivery_charge must be a valid decimal"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            if is_active is not None:
+                config.is_active = bool(is_active)
+            
+            config.updated_by = request.user
+            config.save()
+            
+            return Response({
+                "min_free_shipping_amount": str(config.min_free_shipping_amount),
+                "delivery_charge": str(config.delivery_charge),
+                "is_active": config.is_active,
+                "updated_at": config.updated_at,
+                "message": "Delivery charge configuration updated successfully"
+            }, status=status.HTTP_200_OK)

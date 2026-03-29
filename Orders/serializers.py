@@ -54,6 +54,10 @@ class OrderSerializer(serializers.ModelSerializer):
             "shipping_address_details",
             "total_amount",
             "tip_amount",
+            "coupon",
+            "coupon_code",
+            "discount_amount",
+            "delivery_charge",
             "preferred_delivery_date",
             "preferred_delivery_slot",
             "delivery_notes",
@@ -64,4 +68,4 @@ class OrderSerializer(serializers.ModelSerializer):
             "updated_at",
             "user"
         ]
-        read_only_fields = ["id","user", "status", "total_amount", "tip_amount", "created_at", "updated_at"]
+        read_only_fields = ["id","user", "status", "total_amount", "tip_amount", "coupon", "discount_amount", "delivery_charge", "created_at", "updated_at"]

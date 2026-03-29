@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Order, OrderItem, OrderStatusHistory, Payment, Receipt
+from .models import Order, OrderItem, OrderStatusHistory, Payment, Receipt, DeliveryChargeConfig
 
 class OrderItemInline(admin.TabularInline):
     model = OrderItem
@@ -60,3 +60,33 @@ class ReceiptAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         queryset = super().get_queryset(request)
         return queryset.select_related('payment')
+
+
+@admin.register(DeliveryChargeConfig)
+class DeliveryChargeConfigAdmin(admin.ModelAdmin):
+    list_display = ["min_free_shipping_amount", "delivery_charge", "is_active", "updated_at"]
+    list_editable = ["min_free_shipping_amount", "delivery_charge", "is_active"]
+    list_display_links = None  # Allow editing without opening individual records
+    readonly_fields = ["updated_at", "updated_by"]
+    
+    def has_add_permission(self, request):
+        # Only allow one instance
+        return not DeliveryChargeConfig.objects.exists()
+    
+    def has_delete_permission(self, request, obj=None):
+        # Prevent deletion
+        return False
+    
+    fieldsets = (
+        ("Configuration", {
+            "fields": ("min_free_shipping_amount", "delivery_charge", "is_active")
+        }),
+        ("Meta", {
+            "fields": ("updated_at", "updated_by"),
+            "classes": ("collapse",)
+        }),
+    )
+    
+    def save_model(self, request, obj, form, change):
+        obj.updated_by = request.user
+        super().save_model(request, obj, form, change)
