@@ -24,7 +24,8 @@ from .serializers import (
     UserSerializer, UserCreateSerializer, UserUpdateSerializer,
     UserAdminSerializer, CustomTokenObtainPairSerializer,
     ChangePasswordSerializer, GoogleOAuthSerializer,
-    OTPRequestSerializer, OTPLoginSerializer, VerifyNewContactSerializer
+    OTPRequestSerializer, OTPLoginSerializer, VerifyNewContactSerializer,
+    DeliveryBoyCreateSerializer, DeliveryBoyUpdateSerializer
 )
 from .permissions import IsOwnerOrAdmin, IsAdmin
 from core.rate_limit_utils import throttle_auth_view, throttle_otp_view
@@ -79,8 +80,8 @@ class UserViewSet(viewsets.ModelViewSet):
         """Filter queryset based on user role"""
         user = self.request.user
         if user.is_authenticated and user.role == 'admin':
-            return User.objects.filter(deleted_at__isnull=True).select_related("profile").prefetch_related("addresses", "orders")
-        return User.objects.filter(id=user.id, deleted_at__isnull=True).select_related("profile").prefetch_related("addresses")
+            return User.objects.filter(deleted_at__isnull=True).select_related("profile", "delivery_profile").prefetch_related("addresses", "orders")
+        return User.objects.filter(id=user.id, deleted_at__isnull=True).select_related("profile", "delivery_profile").prefetch_related("addresses")
     
     def create(self, request, *args, **kwargs):
         """Create a new user (registration)"""
@@ -91,6 +92,12 @@ class UserViewSet(viewsets.ModelViewSet):
             UserSerializer(user).data,
             status=status.HTTP_201_CREATED
         )
+
+    def retrieve(self, request, *args, **kwargs):
+        """Retrieve a specific user; show delivery-boy-safe view for delivery boys."""
+        instance = self.get_object()
+        serializer_class = UserSerializer if instance.role == 'delivery_boy' else self.get_serializer_class()
+        return Response(serializer_class(instance).data)
     
     def update(self, request, *args, **kwargs):
         """Update user details"""
@@ -197,13 +204,86 @@ class UserViewSet(viewsets.ModelViewSet):
         
         include_deleted = request.query_params.get('include_deleted', 'false').lower() == 'true'
         
+        role = request.query_params.get('role')
+
         if include_deleted:
             queryset = User.objects.all()
         else:
             queryset = User.objects.filter(deleted_at__isnull=True)
-        
-        serializer = UserAdminSerializer(queryset, many=True)
+
+        queryset = queryset.select_related('profile', 'delivery_profile').prefetch_related('addresses', 'orders')
+
+        if role:
+            queryset = queryset.filter(role=role)
+
+        serializer_class = UserAdminSerializer
+        if role == 'delivery_boy':
+            serializer_class = UserSerializer
+
+        serializer = serializer_class(queryset, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def delivery_boys(self, request):
+        """Admin: List delivery boys with delivery-profile-specific details."""
+        if request.user.role != 'admin':
+            return Response(
+                {'detail': 'Only admins can view delivery boys.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        include_deleted = request.query_params.get('include_deleted', 'false').lower() == 'true'
+        queryset = User.objects.filter(role='delivery_boy')
+        if not include_deleted:
+            queryset = queryset.filter(deleted_at__isnull=True)
+
+        queryset = queryset.select_related('profile', 'delivery_profile').prefetch_related('addresses', 'orders')
+        serializer = UserSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'])
+    def delivery_boy_detail(self, request, pk=None):
+        """Admin: Get one delivery boy with delivery-profile-specific details."""
+        if request.user.role != 'admin':
+            return Response(
+                {'detail': 'Only admins can view delivery boys.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        delivery_boy = self.get_object()
+        if delivery_boy.role != 'delivery_boy':
+            return Response(
+                {'detail': 'Requested user is not a delivery boy.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return Response(UserSerializer(delivery_boy).data)
+
+    @action(detail=True, methods=['patch'])
+    def update_delivery_boy(self, request, pk=None):
+        """Admin: Update delivery-boy-specific user and profile fields."""
+        if request.user.role != 'admin':
+            return Response(
+                {'detail': 'Only admins can update delivery boys.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        delivery_boy = self.get_object()
+        if delivery_boy.role != 'delivery_boy':
+            return Response(
+                {'detail': 'Requested user is not a delivery boy.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer = DeliveryBoyUpdateSerializer(
+            delivery_boy,
+            data=request.data,
+            partial=True,
+            context={'delivery_boy': delivery_boy},
+        )
+        serializer.is_valid(raise_exception=True)
+        updated_delivery_boy = serializer.save()
+        return Response(UserSerializer(updated_delivery_boy).data)
     
     @action(detail=True, methods=['post'])
     def restore(self, request, pk=None):
@@ -241,6 +321,40 @@ class UserViewSet(viewsets.ModelViewSet):
             "blocked": blocked,
             "admins": admins
         })
+
+    @action(detail=False, methods=['post'])
+    def create_delivery_boy(self, request):
+        """
+        Admin-only: Create a new delivery boy user with profile.
+        
+        Request body:
+        {
+            "email": "delivery@example.com",
+            "phone_number": "+971501234567",
+            "first_name": "Ahmed",
+            "last_name": "Ali",
+            "assigned_emirates": ["abu_dhabi", "dubai"],
+            "vehicle_number": "ABC123",
+            "identity_number": "784-1234-5678-9",
+            "emergency_contact": "+971509876543",
+            "notes": "Fast delivery driver",
+            "is_available": true
+        }
+        """
+        if request.user.role != 'admin':
+            return Response(
+                {'detail': 'Only admins can create delivery boys.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = DeliveryBoyCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        
+        return Response(
+            UserSerializer(user).data,
+            status=status.HTTP_201_CREATED
+        )
 
 
 class LoginView(TokenObtainPairView):
