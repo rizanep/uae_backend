@@ -1,6 +1,7 @@
 from django.db import models
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
+from django.core.exceptions import ValidationError
 from Products.models import Product
 from Users.models import UserAddress
 from decimal import Decimal
@@ -131,10 +132,153 @@ class OrderStatusHistory(models.Model):
         return f"{self.order.id} moved to {self.status}"
 
 
+class DeliveryAssignment(models.Model):
+    class AssignmentStatus(models.TextChoices):
+        ASSIGNED = "ASSIGNED", _("Assigned")
+        IN_TRANSIT = "IN_TRANSIT", _("In Transit")
+        COMPLETED = "COMPLETED", _("Completed")
+
+    order = models.OneToOneField(
+        Order,
+        on_delete=models.CASCADE,
+        related_name="delivery_assignment",
+        verbose_name=_("order"),
+    )
+    delivery_boy = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="delivery_assignments",
+        verbose_name=_("delivery boy"),
+    )
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_deliveries",
+        verbose_name=_("assigned by"),
+    )
+    status = models.CharField(
+        _("assignment status"),
+        max_length=20,
+        choices=AssignmentStatus.choices,
+        default=AssignmentStatus.ASSIGNED,
+    )
+    assigned_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    accepted_at = models.DateTimeField(blank=True, null=True)
+    delivered_at = models.DateTimeField(blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
+
+    class Meta:
+        verbose_name = _("Delivery Assignment")
+        verbose_name_plural = _("Delivery Assignments")
+        ordering = ["-assigned_at"]
+        indexes = [
+            models.Index(fields=["delivery_boy", "status"], name="delivery_boy_status_idx"),
+        ]
+
+    def __str__(self):
+        return f"Order #{self.order_id} assigned to {self.delivery_boy}"
+
+    def clean(self):
+        super().clean()
+        if self.delivery_boy.role != 'delivery_boy':
+            raise ValidationError("Assigned user must have delivery_boy role.")
+
+        profile = getattr(self.delivery_boy, 'delivery_profile', None)
+        if not profile:
+            raise ValidationError("Delivery boy profile is required before assignment.")
+
+        order_emirate = getattr(self.order.shipping_address, 'emirate', None)
+        if order_emirate and profile.assigned_emirates and order_emirate not in profile.assigned_emirates:
+            raise ValidationError("Delivery boy is not assigned to this order's emirate.")
+
+
+class DeliveryCancellationRequest(models.Model):
+    class RequestStatus(models.TextChoices):
+        PENDING = "PENDING", _("Pending")
+        APPROVED = "APPROVED", _("Approved")
+        REJECTED = "REJECTED", _("Rejected")
+
+    order = models.OneToOneField(
+        Order,
+        on_delete=models.CASCADE,
+        related_name="delivery_cancel_request",
+        verbose_name=_("order"),
+    )
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="delivery_cancel_requests",
+        verbose_name=_("requested by"),
+    )
+    reason = models.TextField(_("reason"))
+    status = models.CharField(
+        _("request status"),
+        max_length=20,
+        choices=RequestStatus.choices,
+        default=RequestStatus.PENDING,
+        db_index=True,
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reviewed_delivery_cancel_requests",
+        verbose_name=_("reviewed by"),
+    )
+    review_notes = models.TextField(_("review notes"), blank=True, null=True)
+    requested_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    reviewed_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        verbose_name = _("Delivery Cancellation Request")
+        verbose_name_plural = _("Delivery Cancellation Requests")
+        ordering = ["-requested_at"]
+
+    def __str__(self):
+        return f"Cancel request for Order #{self.order_id} ({self.status})"
+
+
+class DeliveryProof(models.Model):
+    order = models.OneToOneField(
+        Order,
+        on_delete=models.CASCADE,
+        related_name="delivery_proof",
+        verbose_name=_("order"),
+    )
+    assignment = models.ForeignKey(
+        DeliveryAssignment,
+        on_delete=models.CASCADE,
+        related_name="proofs",
+        verbose_name=_("delivery assignment"),
+    )
+    proof_image = models.ImageField(upload_to="delivery/proofs/")
+    signature_name = models.CharField(max_length=255, blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="uploaded_delivery_proofs",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _("Delivery Proof")
+        verbose_name_plural = _("Delivery Proofs")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Delivery proof for Order #{self.order_id}"
+
+
 class Payment(models.Model):
     """
     Detailed storage for payment transactions.
-    Prepares for Telr integration.
+    Integrated with Ziina payment gateway.
     """
     class PaymentStatus(models.TextChoices):
         PENDING = "PENDING", _("Pending")
@@ -143,7 +287,7 @@ class Payment(models.Model):
         REFUNDED = "REFUNDED", _("Refunded")
 
     class PaymentMethod(models.TextChoices):
-        TELR = "TELR", _("Telr / Card")
+        ZIINA = "ZIINA", _("Ziina / Card")
         COD = "COD", _("Cash on Delivery")
 
     order = models.OneToOneField(
@@ -153,7 +297,7 @@ class Payment(models.Model):
         verbose_name=_("order"),
     )
     transaction_id = models.CharField(_("transaction ID"), max_length=100, unique=True, blank=True, null=True)
-    telr_reference = models.CharField(_("Telr Reference"), max_length=100, blank=True, null=True)
+    ziina_payment_intent_id = models.CharField(_("Ziina Payment Intent ID"), max_length=200, blank=True, null=True)
     amount = models.DecimalField(_("amount"), max_digits=12, decimal_places=2)
     status = models.CharField(
         _("status"),
@@ -165,7 +309,7 @@ class Payment(models.Model):
         _("payment method"), 
         max_length=50, 
         choices=PaymentMethod.choices,
-        default=PaymentMethod.TELR
+        default=PaymentMethod.ZIINA
     )
     provider_response = models.JSONField(_("provider response"), blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)

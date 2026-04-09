@@ -1,6 +1,6 @@
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from .models import User, UserProfile
+from .models import User, UserProfile, DeliveryBoyProfile
 from Marketing.services import create_first_order_coupon, grant_referral_rewards, generate_referral_code
 
 @receiver(post_save, sender=User)
@@ -12,6 +12,8 @@ def create_user_profile(sender, instance, created, **kwargs):
     if created:
         # Create Profile
         UserProfile.objects.get_or_create(user=instance)
+        if instance.role == 'delivery_boy':
+            DeliveryBoyProfile.objects.get_or_create(user=instance)
         
         # Generate Referral Code for the new user
         if not instance.referral_code:
@@ -34,3 +36,6 @@ def save_user_profile(sender, instance, **kwargs):
     """
     if hasattr(instance, 'profile'):
         instance.profile.save()
+
+    if instance.role == 'delivery_boy':
+        DeliveryBoyProfile.objects.get_or_create(user=instance)

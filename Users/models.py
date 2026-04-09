@@ -3,7 +3,19 @@ from django.db import models
 from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractUser
 from django.core.validators import RegexValidator
+from django.core.exceptions import ValidationError
 from django.utils import timezone
+
+
+UAE_EMIRATE_CHOICES = [
+    ('abu_dhabi', 'Abu Dhabi'),
+    ('dubai', 'Dubai'),
+    ('sharjah', 'Sharjah'),
+    ('ajman', 'Ajman'),
+    ('umm_al_quwain', 'Umm Al Quwain'),
+    ('ras_al_khaimah', 'Ras Al Khaimah'),
+    ('fujairah', 'Fujairah'),
+]
 
 
 class TimestampedModel(models.Model):
@@ -74,6 +86,7 @@ class User(AbstractUser):
     ROLE_CHOICES = [
         ('admin', 'Admin'),
         ('user', 'User'),
+        ('delivery_boy', 'Delivery Boy'),
     ]
 
     email = models.EmailField(unique=True,null=True,blank=True)
@@ -147,6 +160,13 @@ class User(AbstractUser):
         if self.email:
             return self.email
         return self.phone_number or f"User {self.pk}"
+
+    def save(self, *args, **kwargs):
+        """Auto-generate referral code if not exists"""
+        if not self.referral_code:
+            from Marketing.services import generate_referral_code
+            self.referral_code = generate_referral_code()
+        super().save(*args, **kwargs)
 
     def soft_delete(self):
         if not self.deleted_at:
@@ -314,6 +334,50 @@ class UserProfile(models.Model):
         return f"Profile of {self.user}"
 
 
+class DeliveryBoyProfile(models.Model):
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='delivery_profile',
+        verbose_name='delivery boy user'
+    )
+    assigned_emirates = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='List of emirate keys assigned to this delivery boy.'
+    )
+    is_available = models.BooleanField(default=True)
+    identity_number = models.CharField(max_length=100, blank=True, null=True)
+    vehicle_number = models.CharField(max_length=50, blank=True, null=True)
+    emergency_contact = models.CharField(max_length=20, blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Delivery Boy Profile'
+        verbose_name_plural = 'Delivery Boy Profiles'
+        db_table = 'delivery_boy_profiles'
+
+    def __str__(self):
+        return f"Delivery Profile of {self.user}"
+
+    def clean(self):
+        super().clean()
+        valid_emirates = {code for code, _ in UAE_EMIRATE_CHOICES}
+        emirates = self.assigned_emirates or []
+        if not isinstance(emirates, list):
+            raise ValidationError('assigned_emirates must be a list.')
+        invalid = [em for em in emirates if em not in valid_emirates]
+        if invalid:
+            raise ValidationError(f'Invalid emirates: {invalid}')
+
+    @property
+    def assigned_emirates_display(self):
+        emirate_map = dict(UAE_EMIRATE_CHOICES)
+        return [emirate_map.get(code, code) for code in (self.assigned_emirates or [])]
+
+
 class UserAddress(models.Model):
     ADDRESS_TYPE_CHOICES = [
         ('home', 'Home'),
@@ -321,15 +385,7 @@ class UserAddress(models.Model):
         ('other', 'Other'),
     ]
 
-    EMIRATE_CHOICES = [
-        ('abu_dhabi', 'Abu Dhabi'),
-        ('dubai', 'Dubai'),
-        ('sharjah', 'Sharjah'),
-        ('ajman', 'Ajman'),
-        ('umm_al_quwain', 'Umm Al Quwain'),
-        ('ras_al_khaimah', 'Ras Al Khaimah'),
-        ('fujairah', 'Fujairah'),
-    ]
+    EMIRATE_CHOICES = UAE_EMIRATE_CHOICES
 
     id = models.UUIDField(
         primary_key=True,
@@ -403,14 +459,14 @@ class UserAddress(models.Model):
         default='AE'
     )
     latitude = models.DecimalField(
-        max_digits=9,
-        decimal_places=6,
+        max_digits=20,
+        decimal_places=17,
         blank=True,
         null=True
     )
     longitude = models.DecimalField(
-        max_digits=9,
-        decimal_places=6,
+        max_digits=20,
+        decimal_places=17,
         blank=True,
         null=True
     )

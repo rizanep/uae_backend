@@ -1,26 +1,46 @@
 from rest_framework import viewsets, status, permissions
-from rest_framework.decorators import action, throttle_classes
+from rest_framework.decorators import action, throttle_classes, api_view, permission_classes
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
-from django.db.models import Count, Sum, Avg, F
+from django.db.models import Count, Sum, Avg, F, Q
 from django.db.models.functions import TruncDate
 from django.shortcuts import get_object_or_404
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
+from django.conf import settings
 from datetime import timedelta
 from decimal import Decimal
-from .models import Order, OrderItem, Payment, Receipt, DeliveryChargeConfig
-from .serializers import OrderSerializer
+import re
+import logging
+import hmac
+import hashlib
+import json
+
+from .models import (
+    Order,
+    OrderItem,
+    Payment,
+    Receipt,
+    DeliveryChargeConfig,
+    DeliveryAssignment,
+    DeliveryProof,
+    DeliveryCancellationRequest,
+)
+from .serializers import OrderSerializer, AdminPaymentSerializer
 from Cart.models import Cart, CartItem
 from Users.models import UserAddress, User
 from Reviews.models import Review
-from .payment_service import TelrPaymentService
+from .payment_service import ZiinaPaymentService
 from .receipt_templates import render_receipt_image, render_receipt_pdf, render_admin_receipt_pdf
 from .utils import calculate_delivery_estimate, get_earliest_delivery_date
 from .coupon_service import validate_and_calculate_coupon, apply_coupon_to_order, get_delivery_charge
 from core.throttling import UserOrderThrottle, UserPaymentThrottle, AnonGeneralThrottle
-import re
+
+logger = logging.getLogger(__name__)
+webhook_logger = logging.getLogger('Orders.webhook')
+payment_logger = logging.getLogger('Orders.payment')
 
 class OrderViewSet(viewsets.ModelViewSet):
     """
@@ -51,11 +71,301 @@ class OrderViewSet(viewsets.ModelViewSet):
         if not user.is_authenticated:
             return Order.objects.none()
         qs = Order.objects.select_related(
-            "user", "shipping_address", "payment", "payment__receipt"
+            "user", "shipping_address", "payment", "payment__receipt", "delivery_assignment", "delivery_proof"
         ).prefetch_related("items", "items__product", "status_history")
         if user.role == "admin":
             return qs
+        if user.role == "delivery_boy":
+            delivery_profile = getattr(user, "delivery_profile", None)
+            if not delivery_profile:
+                return Order.objects.none()
+            assigned_emirates = delivery_profile.assigned_emirates or []
+            return qs.filter(
+                Q(delivery_assignment__delivery_boy=user)
+                |
+                (
+                    Q(shipping_address__emirate__in=assigned_emirates)
+                    & Q(status__in=[Order.OrderStatus.PAID, Order.OrderStatus.PROCESSING])
+                    & Q(delivery_assignment__isnull=True)
+                )
+            ).distinct()
         return qs.filter(user=user)
+
+    def _validate_delivery_access(self, order, user):
+        if user.role != 'delivery_boy':
+            return False, Response({'error': 'Only delivery boys can perform this action.'}, status=status.HTTP_403_FORBIDDEN)
+
+        delivery_profile = getattr(user, 'delivery_profile', None)
+        if not delivery_profile or not delivery_profile.is_available:
+            return False, Response({'error': 'Delivery profile is not available.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if not order.shipping_address:
+            return False, Response({'error': 'Order does not have a valid shipping address.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if order.shipping_address.emirate not in (delivery_profile.assigned_emirates or []):
+            return False, Response({'error': 'Order emirate is outside your assigned coverage.'}, status=status.HTTP_403_FORBIDDEN)
+
+        return True, None
+
+    @action(detail=False, methods=["get"], permission_classes=[permissions.IsAuthenticated])
+    def delivery_dashboard(self, request):
+        user = request.user
+        if user.role != 'delivery_boy':
+            return Response({'error': 'Only delivery boys can access this dashboard.'}, status=status.HTTP_403_FORBIDDEN)
+
+        profile = getattr(user, 'delivery_profile', None)
+        if not profile:
+            return Response({'error': 'Delivery profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        today = timezone.now().date()
+        assigned_qs = DeliveryAssignment.objects.filter(delivery_boy=user)
+        completed_today = assigned_qs.filter(delivered_at__date=today).count()
+        pending_assigned = assigned_qs.exclude(order__status__in=[Order.OrderStatus.DELIVERED, Order.OrderStatus.CANCELLED]).count()
+
+        available_orders_qs = Order.objects.filter(
+            shipping_address__emirate__in=(profile.assigned_emirates or []),
+            status__in=[Order.OrderStatus.PAID, Order.OrderStatus.PROCESSING],
+            delivery_assignment__isnull=True,
+        )
+
+        recent_orders = Order.objects.filter(delivery_assignment__delivery_boy=user).order_by('-updated_at')[:10]
+
+        return Response({
+            'delivery_boy': {
+                'id': user.id,
+                'name': f"{user.first_name} {user.last_name}".strip() or user.email or user.phone_number,
+                'is_available': profile.is_available,
+                'assigned_emirates': profile.assigned_emirates,
+                'assigned_emirates_display': profile.assigned_emirates_display,
+            },
+            'kpis': {
+                'assigned_orders': assigned_qs.count(),
+                'completed_today': completed_today,
+                'pending_assigned_orders': pending_assigned,
+                'available_orders_in_region': available_orders_qs.count(),
+                'completed_total': assigned_qs.filter(status=DeliveryAssignment.AssignmentStatus.COMPLETED).count(),
+            },
+            'recent_assigned_orders': OrderSerializer(recent_orders, many=True, context={'request': request}).data,
+        })
+
+    @action(detail=False, methods=["get"], permission_classes=[permissions.IsAuthenticated])
+    def available_orders(self, request):
+        user = request.user
+        if user.role != 'delivery_boy':
+            return Response({'error': 'Only delivery boys can access available orders.'}, status=status.HTTP_403_FORBIDDEN)
+
+        profile = getattr(user, 'delivery_profile', None)
+        if not profile:
+            return Response({'error': 'Delivery profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        qs = Order.objects.filter(
+            shipping_address__emirate__in=(profile.assigned_emirates or []),
+            status__in=[Order.OrderStatus.PAID, Order.OrderStatus.PROCESSING],
+            delivery_assignment__isnull=True,
+        ).select_related('shipping_address', 'user', 'payment')
+
+        serializer = OrderSerializer(qs, many=True, context={'request': request})
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
+    @transaction.atomic
+    def claim_order(self, request, pk=None):
+        order = self.get_object()
+        is_valid, error_response = self._validate_delivery_access(order, request.user)
+        if not is_valid:
+            return error_response
+
+        if order.status not in [Order.OrderStatus.PAID, Order.OrderStatus.PROCESSING]:
+            return Response({'error': 'Only paid or processing orders can be claimed.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if hasattr(order, 'delivery_assignment'):
+            return Response({'error': 'Order is already assigned.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        assignment = DeliveryAssignment.objects.create(
+            order=order,
+            delivery_boy=request.user,
+            assigned_by=request.user,
+            status=DeliveryAssignment.AssignmentStatus.ASSIGNED,
+            accepted_at=timezone.now(),
+            notes=request.data.get('notes', 'Claimed by delivery boy from regional queue.')
+        )
+
+        if order.status == Order.OrderStatus.PAID:
+            order.status = Order.OrderStatus.PROCESSING
+            order.save(update_fields=['status', 'updated_at'])
+
+        return Response({
+            'message': 'Order claimed successfully.',
+            'order_id': order.id,
+            'assignment_id': assignment.id,
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
+    @transaction.atomic
+    def delivery_update_status(self, request, pk=None):
+        order = self.get_object()
+        if request.user.role != 'delivery_boy':
+            return Response({'error': 'Only delivery boys can update delivery status.'}, status=status.HTTP_403_FORBIDDEN)
+
+        assignment = getattr(order, 'delivery_assignment', None)
+        if not assignment or assignment.delivery_boy_id != request.user.id:
+            return Response({'error': 'Order is not assigned to you.'}, status=status.HTTP_403_FORBIDDEN)
+
+        new_status = request.data.get('status')
+        notes = request.data.get('notes', '')
+
+        if new_status == Order.OrderStatus.SHIPPED:
+            if order.status not in [Order.OrderStatus.PAID, Order.OrderStatus.PROCESSING]:
+                return Response({'error': 'Order cannot be moved to SHIPPED from current status.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            order.status = Order.OrderStatus.SHIPPED
+            order.save(update_fields=['status', 'updated_at'])
+            assignment.status = DeliveryAssignment.AssignmentStatus.IN_TRANSIT
+            if not assignment.accepted_at:
+                assignment.accepted_at = timezone.now()
+            assignment.notes = notes or assignment.notes
+            assignment.save(update_fields=['status', 'accepted_at', 'notes'])
+            return Response({'message': 'Order marked as shipped.'})
+
+        if new_status == Order.OrderStatus.DELIVERED:
+            if order.status != Order.OrderStatus.SHIPPED:
+                return Response({'error': 'Order must be SHIPPED before DELIVERED.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            proof_image = request.FILES.get('proof_image')
+            existing_proof = getattr(order, 'delivery_proof', None)
+            if not proof_image and not existing_proof:
+                return Response({'error': 'proof_image is required for delivery confirmation.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            order.status = Order.OrderStatus.DELIVERED
+            order.save(update_fields=['status', 'updated_at'])
+
+            assignment.status = DeliveryAssignment.AssignmentStatus.COMPLETED
+            assignment.delivered_at = timezone.now()
+            assignment.notes = notes or assignment.notes
+            assignment.save(update_fields=['status', 'delivered_at', 'notes'])
+
+            if existing_proof:
+                if proof_image:
+                    existing_proof.proof_image = proof_image
+                existing_proof.signature_name = request.data.get('signature_name')
+                existing_proof.notes = request.data.get('proof_notes')
+                existing_proof.uploaded_by = request.user
+                existing_proof.save()
+            else:
+                DeliveryProof.objects.create(
+                    order=order,
+                    assignment=assignment,
+                    proof_image=proof_image,
+                    signature_name=request.data.get('signature_name'),
+                    notes=request.data.get('proof_notes'),
+                    uploaded_by=request.user,
+                )
+
+            return Response({'message': 'Order marked as delivered with proof.'})
+
+        if new_status == Order.OrderStatus.CANCELLED:
+            reason = request.data.get('reason', '').strip()
+            if not reason:
+                return Response({'error': 'reason is required for cancellation request.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            cancel_request, created = DeliveryCancellationRequest.objects.get_or_create(
+                order=order,
+                defaults={
+                    'requested_by': request.user,
+                    'reason': reason,
+                    'status': DeliveryCancellationRequest.RequestStatus.PENDING,
+                }
+            )
+            if not created and cancel_request.status == DeliveryCancellationRequest.RequestStatus.PENDING:
+                return Response({'error': 'Cancellation request is already pending admin review.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if not created:
+                cancel_request.requested_by = request.user
+                cancel_request.reason = reason
+                cancel_request.status = DeliveryCancellationRequest.RequestStatus.PENDING
+                cancel_request.review_notes = None
+                cancel_request.reviewed_by = None
+                cancel_request.reviewed_at = None
+                cancel_request.save()
+
+            return Response({'message': 'Cancellation request submitted for admin approval.'}, status=status.HTTP_202_ACCEPTED)
+
+        return Response(
+            {'error': f'Invalid delivery status. Allowed: {Order.OrderStatus.SHIPPED}, {Order.OrderStatus.DELIVERED}, {Order.OrderStatus.CANCELLED}'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAdminUser])
+    @transaction.atomic
+    def admin_review_cancel_request(self, request, pk=None):
+        order = self.get_object()
+        cancel_request = getattr(order, 'delivery_cancel_request', None)
+        if not cancel_request:
+            return Response({'error': 'Cancellation request not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if cancel_request.status != DeliveryCancellationRequest.RequestStatus.PENDING:
+            return Response({'error': 'Only pending cancellation requests can be reviewed.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        decision = request.data.get('decision')
+        review_notes = request.data.get('review_notes', '')
+
+        if decision == 'approve':
+            order.status = Order.OrderStatus.CANCELLED
+            order.save(update_fields=['status', 'updated_at'])
+            cancel_request.status = DeliveryCancellationRequest.RequestStatus.APPROVED
+        elif decision == 'reject':
+            cancel_request.status = DeliveryCancellationRequest.RequestStatus.REJECTED
+        else:
+            return Response({'error': "decision must be either 'approve' or 'reject'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        cancel_request.reviewed_by = request.user
+        cancel_request.review_notes = review_notes
+        cancel_request.reviewed_at = timezone.now()
+        cancel_request.save()
+
+        return Response({'message': f'Cancellation request {cancel_request.status.lower()}.'}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAdminUser])
+    @transaction.atomic
+    def admin_assign_delivery_boy(self, request, pk=None):
+        order = self.get_object()
+        delivery_boy_id = request.data.get('delivery_boy_id')
+        notes = request.data.get('notes', 'Assigned by admin.')
+
+        if not delivery_boy_id:
+            return Response({'error': 'delivery_boy_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        delivery_boy = get_object_or_404(User, id=delivery_boy_id, role='delivery_boy')
+        profile = getattr(delivery_boy, 'delivery_profile', None)
+        if not profile:
+            return Response({'error': 'Delivery boy profile not found.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not order.shipping_address:
+            return Response({'error': 'Order does not have a shipping address.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if order.shipping_address.emirate not in (profile.assigned_emirates or []):
+            return Response({'error': 'Selected delivery boy is not assigned to this emirate.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        assignment_values = {
+            'delivery_boy': delivery_boy,
+            'assigned_by': request.user,
+            'notes': notes,
+        }
+
+        assignment, created = DeliveryAssignment.objects.update_or_create(
+            order=order,
+            defaults=assignment_values,
+        )
+
+        if created and order.status == Order.OrderStatus.PAID:
+            order.status = Order.OrderStatus.PROCESSING
+            order.save(update_fields=['status', 'updated_at'])
+
+        return Response({
+            'message': 'Delivery boy assigned successfully.',
+            'order_id': order.id,
+            'assignment_id': assignment.id,
+        })
 
     @throttle_classes([UserOrderThrottle(), AnonGeneralThrottle()])
     @action(detail=False, methods=["post"])
@@ -234,7 +544,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         delivery_date = request.data.get("preferred_delivery_date")
         delivery_slot = request.data.get("preferred_delivery_slot")
         delivery_notes = request.data.get("delivery_notes")
-        payment_method = request.data.get("payment_method", "TELR")
+        payment_method = request.data.get("payment_method", "ZIINA")
         tip_amount = Decimal(str(request.data.get("tip_amount", 0)))
         coupon_code = request.data.get("coupon_code", "").upper().strip()
         
@@ -298,6 +608,11 @@ class OrderViewSet(viewsets.ModelViewSet):
             discount_amount = coupon_result['discount_amount']
             coupon = coupon_result['coupon']
             cart_total = coupon_result['final_amount']
+            
+            # Update coupon: mark as invalid and increment used count
+            coupon.is_active = False
+            coupon.used_count += 1
+            coupon.save()
         
         # 4.6. Calculate Delivery Charge
         delivery_charge = get_delivery_charge(cart_total)
@@ -332,6 +647,15 @@ class OrderViewSet(viewsets.ModelViewSet):
             ))
         OrderItem.objects.bulk_create(order_items)
 
+        # 5.5. Reduce Stock
+        for item in order.items.all():
+            product = item.product
+            if product:
+                product.stock -= item.quantity
+                if product.stock < 0:
+                    product.stock = 0
+                product.save()
+
         # 6. Handle Payment
         if payment_method == "COD":
             Payment.objects.create(
@@ -351,14 +675,22 @@ class OrderViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_201_CREATED)
         
         else:
-            # Create Pending Payment (Telr)
-            payment_data = TelrPaymentService.initiate_payment(order)
+            # Create Ziina Payment Intent
+            try:
+                payment_data = ZiinaPaymentService.create_payment_intent(order)
+            except Exception as e:
+                logger.error(f"Ziina payment intent creation failed for Order #{order.id}: {e}")
+                return Response(
+                    {"error": "Payment gateway error. Please try again."},
+                    status=status.HTTP_502_BAD_GATEWAY
+                )
+
             Payment.objects.create(
                 order=order,
-                telr_reference=payment_data["reference"],
+                ziina_payment_intent_id=payment_data["payment_intent_id"],
                 amount=order.total_amount,
                 status=Payment.PaymentStatus.PENDING,
-                payment_method=Payment.PaymentMethod.TELR
+                payment_method=Payment.PaymentMethod.ZIINA
             )
 
             # Clear Cart (Items only, keep the cart object)
@@ -367,9 +699,9 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response({
                 "message": "Order created successfully.",
                 "order_id": order.id,
-                "payment_url": payment_data["payment_url"],
+                "payment_url": payment_data["redirect_url"],
                 "total_amount": order.total_amount,
-                "payment_method": "TELR"
+                "payment_method": "ZIINA"
             }, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAdminUser])
@@ -393,11 +725,6 @@ class OrderViewSet(viewsets.ModelViewSet):
         order.status = new_status
         order.save()
         
-        # Increment coupon usage if status changed to PAID and coupon exists (for COD orders)
-        if new_status == Order.OrderStatus.PAID and old_status != Order.OrderStatus.PAID and order.coupon:
-            order.coupon.used_count += 1
-            order.coupon.save()
-        
         # Update status history notes
         latest_history = order.status_history.last()
         if latest_history and latest_history.status == new_status:
@@ -412,9 +739,8 @@ class OrderViewSet(viewsets.ModelViewSet):
     @transaction.atomic
     def verify_payment(self, request, pk=None):
         """
-        Simulate payment verification.
-        In production, this would be a webhook from Telr.
-        Updates payment status, order status, and reduces product stock.
+        Verify payment status with Ziina.
+        Checks the payment intent status via Ziina API.
         
         Rate limited: 30 requests/hour for users (fraud prevention)
         """
@@ -427,45 +753,125 @@ class OrderViewSet(viewsets.ModelViewSet):
         if payment.status != Payment.PaymentStatus.PENDING:
             return Response({"error": "Payment is not in pending status."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Mock verification
-        verification_result = TelrPaymentService.verify_payment(payment.telr_reference)
-        
-        if verification_result["status"] == "SUCCESS":
+        try:
+            ziina_data = ZiinaPaymentService.get_payment_intent(payment.ziina_payment_intent_id)
+        except Exception as e:
+            logger.error(f"Ziina verify_payment failed for Order #{order.id}: {e}")
+            return Response(
+                {"error": "Unable to verify payment. Please try again."},
+                status=status.HTTP_502_BAD_GATEWAY
+            )
+
+        ziina_status = ziina_data.get("status", "").upper()
+
+        if ziina_status == "COMPLETED":
             # 1. Update Payment Status (This triggers signal handle_payment_success)
             payment.status = Payment.PaymentStatus.SUCCESS
-            payment.transaction_id = verification_result["transaction_id"]
-            payment.provider_response = verification_result
+            payment.transaction_id = ziina_data.get("id")
+            payment.provider_response = ziina_data
             payment.save()
-
-            # 2. Increment Coupon Usage Count if coupon was applied
-            if order.coupon:
-                order.coupon.used_count += 1
-                order.coupon.save()
-
-            # 3. Reduce Stock
-            for item in order.items.all():
-                product = item.product
-                if product:
-                    product.stock -= item.quantity
-                    if product.stock < 0:
-                        product.stock = 0
-                    product.save()
 
             return Response({"message": "Payment verified, order updated, and receipt generated."})
         
-        # Handle failure
-        payment.status = Payment.PaymentStatus.FAILED
+        if ziina_status in ("FAILED", "EXPIRED", "CANCELLED"):
+            payment.status = Payment.PaymentStatus.FAILED
+            payment.provider_response = ziina_data
+            payment.save()
+            return Response({"error": "Payment verification failed."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Still pending
+        return Response({"message": "Payment is still being processed.", "status": ziina_status})
+
+    @throttle_classes([UserPaymentThrottle(), AnonGeneralThrottle()])
+    @action(detail=True, methods=["post"])
+    @transaction.atomic
+    def retry_payment(self, request, pk=None):
+        """
+        Retry payment for an order whose payment failed, expired, or was cancelled.
+        Creates a new Ziina payment intent and returns the new payment link.
+        
+        Rate limited: 30 requests/hour for users (fraud prevention)
+        """
+        order = self.get_object()
+
+        if order.status != Order.OrderStatus.PENDING:
+            return Response(
+                {"error": "Only pending orders can retry payment."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        payment = getattr(order, "payment", None)
+        if not payment:
+            return Response({"error": "Payment record not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if payment.status == Payment.PaymentStatus.SUCCESS:
+            return Response(
+                {"error": "Payment already completed."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if payment.status == Payment.PaymentStatus.PENDING:
+            # Check with Ziina if it's actually still valid
+            try:
+                ziina_data = ZiinaPaymentService.get_payment_intent(payment.ziina_payment_intent_id)
+                ziina_status = ziina_data.get("status", "").upper()
+
+                if ziina_status not in ("FAILED", "EXPIRED", "CANCELLED"):
+                    # Still active — return the existing redirect URL
+                    return Response({
+                        "message": "Payment is still active.",
+                        "order_id": order.id,
+                        "payment_url": ziina_data.get("redirect_url"),
+                        "total_amount": str(order.total_amount),
+                    })
+                # Mark as failed so we can create a new one
+                payment.status = Payment.PaymentStatus.FAILED
+                payment.provider_response = ziina_data
+                payment.save()
+            except Exception as e:
+                logger.error(f"Ziina status check failed during retry for Order #{order.id}: {e}")
+
+        # Create a new Ziina payment intent
+        try:
+            payment_data = ZiinaPaymentService.create_payment_intent(order)
+        except Exception as e:
+            logger.error(f"Ziina retry payment intent creation failed for Order #{order.id}: {e}")
+            return Response(
+                {"error": "Payment gateway error. Please try again."},
+                status=status.HTTP_502_BAD_GATEWAY
+            )
+
+        # Update the existing payment record with the new intent
+        payment.ziina_payment_intent_id = payment_data["payment_intent_id"]
+        payment.status = Payment.PaymentStatus.PENDING
+        payment.provider_response = None
         payment.save()
-        return Response({"error": "Payment verification failed."}, status=status.HTTP_400_BAD_REQUEST)
+
+        logger.info(f"Retry payment: new Ziina intent {payment_data['payment_intent_id']} for Order #{order.id}")
+
+        return Response({
+            "message": "New payment link generated.",
+            "order_id": order.id,
+            "payment_url": payment_data["redirect_url"],
+            "total_amount": str(order.total_amount),
+            "payment_method": "ZIINA"
+        })
 
     @action(detail=True, methods=["post"])
     def cancel_order(self, request, pk=None):
-        """Cancel a pending order."""
+        """Cancel a pending order and restore stock."""
         order = self.get_object()
         if order.status == Order.OrderStatus.PENDING:
+            # Restore stock for all items in the order
+            for item in order.items.all():
+                product = item.product
+                if product:
+                    product.stock += item.quantity
+                    product.save()
+            
             order.status = Order.OrderStatus.CANCELLED
             order.save()
-            return Response({"message": "Order cancelled."})
+            return Response({"message": "Order cancelled and stock restored."})
         return Response({"error": "Only pending orders can be cancelled."}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=["get"])
@@ -780,3 +1186,217 @@ class OrderViewSet(viewsets.ModelViewSet):
                 "updated_at": config.updated_at,
                 "message": "Delivery charge configuration updated successfully"
             }, status=status.HTTP_200_OK)
+
+
+class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Admin-only ViewSet for viewing payment details.
+    Allows admins to:
+    - List all payments with customer, order, and transaction info
+    - View detailed payment information
+    - Filter by payment status, method, date range, order status
+    - Search by customer email, phone, or order ID
+    """
+    serializer_class = AdminPaymentSerializer
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = [
+        'status',
+        'payment_method',
+        'order__status',
+        'created_at',
+    ]
+    search_fields = [
+        'order__user__email',
+        'order__user__phone_number',
+        'order__id',
+        'transaction_id',
+    ]
+    ordering_fields = [
+        'created_at',
+        'amount',
+        'status',
+    ]
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        """Return all payments with optimized queries."""
+        return Payment.objects.select_related(
+            'order',
+            'order__user'
+        ).order_by('-created_at')
+
+
+# ============================================================================
+# WEBHOOK HANDLERS
+# ============================================================================
+
+def verify_webhook_signature(request_body, signature, webhook_secret):
+    """
+    Verify the authenticity of a webhook request using HMAC-SHA256.
+    
+    Args:
+        request_body: Raw request body (bytes)
+        signature: Signature from the X-Webhook-Signature header
+        webhook_secret: Secret key configured for the webhook
+    
+    Returns:
+        bool: True if signature is valid, False otherwise
+    """
+    try:
+        # Create HMAC signature
+        expected_signature = hmac.new(
+            webhook_secret.encode(),
+            request_body,
+            hashlib.sha256
+        ).hexdigest()
+        
+        # Use constant-time comparison to prevent timing attacks
+        return hmac.compare_digest(signature, expected_signature)
+    except Exception as e:
+        webhook_logger.error(f"Webhook signature verification error: {e}")
+        return False
+
+
+@csrf_exempt
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+@transaction.atomic
+def ziina_webhook(request):
+    """
+    Webhook endpoint to receive real-time payment status updates from Ziina.
+    
+    Handles the 'payment_intent.status.updated' event.
+    Verifies webhook authenticity using HMAC-SHA256 if secret is configured.
+    
+    Webhook Payload Structure:
+    {
+        "event": "payment_intent.status.updated",
+        "data": {
+            "id": "<payment_intent_id>",
+            "status": "COMPLETED|FAILED|EXPIRED|CANCELLED",
+            "amount": <amount_in_fils>,
+            "currency_code": "AED",
+            ...
+        }
+    }
+    
+    Response:
+    {
+        "success": true,
+        "message": "Webhook processed successfully"
+    }
+    """
+    try:
+        # Get request body for signature verification
+        request_body = request.body
+        
+        # Get webhook signature from header
+        signature = request.headers.get('X-Webhook-Signature', '')
+        
+        # Parse JSON payload
+        try:
+            payload = json.loads(request_body.decode('utf-8'))
+        except (ValueError, AttributeError) as e:
+            webhook_logger.error(f"Invalid webhook payload: {e}")
+            return JsonResponse({
+                "success": False,
+                "error": "Invalid JSON payload"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Verify signature if webhook secret is configured
+        webhook_secret = getattr(settings, 'ZIINA_WEBHOOK_SECRET', None)
+        if webhook_secret:
+            if not signature:
+                webhook_logger.warning("Webhook signature missing but secret is configured")
+                return JsonResponse({
+                    "success": False,
+                    "error": "Signature required"
+                }, status=status.HTTP_401_UNAUTHORIZED)
+            
+            if not verify_webhook_signature(request_body, signature, webhook_secret):
+                webhook_logger.warning("Webhook signature verification failed")
+                return JsonResponse({
+                    "success": False,
+                    "error": "Invalid signature"
+                }, status=status.HTTP_401_UNAUTHORIZED)
+        
+        # Extract event and data
+        event = payload.get('event')
+        data = payload.get('data', {})
+        
+        # Only handle payment_intent.status.updated events
+        if event != 'payment_intent.status.updated':
+            webhook_logger.info(f"Ignoring webhook event: {event}")
+            return JsonResponse({
+                "success": True,
+                "message": f"Event {event} not handled"
+            }, status=status.HTTP_200_OK)
+        
+        # Extract payment intent ID and status
+        payment_intent_id = data.get('id')
+        ziina_status = data.get('status', '').upper()
+        
+        if not payment_intent_id:
+            webhook_logger.error("Webhook missing payment_intent_id")
+            return JsonResponse({
+                "success": False,
+                "error": "Missing payment_intent_id"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not ziina_status:
+            webhook_logger.error("Webhook missing status")
+            return JsonResponse({
+                "success": False,
+                "error": "Missing status"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Find the payment record by Ziina payment intent ID
+        try:
+            payment = Payment.objects.get(ziina_payment_intent_id=payment_intent_id)
+        except Payment.DoesNotExist:
+            webhook_logger.warning(f"Payment not found for intent ID: {payment_intent_id}")
+            return JsonResponse({
+                "success": False,
+                "error": "Payment intent not found"
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        # Update payment status based on Ziina status
+        old_status = payment.status
+        
+        if ziina_status == "COMPLETED":
+            payment.status = Payment.PaymentStatus.SUCCESS
+            payment.transaction_id = data.get('id')
+        elif ziina_status in ("FAILED", "EXPIRED", "CANCELLED"):
+            payment.status = Payment.PaymentStatus.FAILED
+        else:
+            # Unknown status, log but don't change
+            webhook_logger.warning(f"Unknown Ziina status: {ziina_status}")
+            return JsonResponse({
+                "success": False,
+                "error": f"Unknown status: {ziina_status}"
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Store the full provider response for audit trail
+        payment.provider_response = data
+        payment.save()
+        
+        webhook_logger.info(
+            f"Webhook processed: Payment #{payment.id} (Order #{payment.order.id}) "
+            f"status updated from {old_status} to {payment.status}"
+        )
+        
+        return JsonResponse({
+            "success": True,
+            "message": "Webhook processed successfully",
+            "payment_id": payment.id,
+            "order_id": payment.order.id,
+            "status": payment.status
+        }, status=status.HTTP_200_OK)
+    
+    except Exception as e:
+        webhook_logger.error(f"Webhook processing error: {e}", exc_info=True)
+        return JsonResponse({
+            "success": False,
+            "error": "Internal server error"
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

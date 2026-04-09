@@ -40,3 +40,5 @@ reportlab
 django-redis
 twilio
 qrcode[pil]
+google-auth
+google-auth-httplib2

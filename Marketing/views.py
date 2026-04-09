@@ -5,8 +5,14 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters import rest_framework as django_filters
-from .models import MarketingMedia, Coupon
-from .serializers import MarketingMediaSerializer, CouponSerializer, ApplyReferralSerializer
+from .models import MarketingMedia, Coupon, RewardConfiguration
+from .serializers import (
+    MarketingMediaSerializer, 
+    CouponSerializer, 
+    ApplyReferralSerializer,
+    AdminCouponSerializer,
+    RewardConfigurationSerializer
+)
 from .services import grant_referral_rewards
 from Users.models import User
 
@@ -113,3 +119,173 @@ class CouponViewSet(viewsets.ReadOnlyModelViewSet):
             user.save(update_fields=['referral_reward_claimed'])
             
         return Response({"detail": "Referral code applied successfully. Coupons granted!"}, status=status.HTTP_200_OK)
+
+
+class AdminCouponViewSet(viewsets.ModelViewSet):
+    """
+    Admin-only ViewSet for managing all coupons.
+    Allows admins to:
+    - View all coupons (including global and user-specific)
+    - Create new coupons
+    - Update coupon details
+    - Delete/soft-delete coupons
+    - Filter by various fields
+    """
+    serializer_class = AdminCouponSerializer
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    filter_backends = [django_filters.DjangoFilterBackend]
+    filterset_fields = [
+        'is_active',
+        'discount_type',
+        'is_referral_reward',
+        'is_first_order_reward',
+        'assigned_user',
+        'valid_from',
+        'valid_to',
+    ]
+    search_fields = ['code', 'description', 'assigned_user__email', 'assigned_user__phone_number']
+    ordering_fields = ['created_at', 'updated_at', 'discount_value', 'used_count']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        # Admins see all coupons including soft-deleted ones
+        return Coupon.objects.select_related('assigned_user').order_by('-created_at')
+
+    def perform_create(self, serializer):
+        serializer.save()
+
+    def perform_update(self, serializer):
+        serializer.save()
+
+    @action(detail=True, methods=['post'])
+    def soft_delete(self, request, pk=None):
+        """Soft delete a coupon."""
+        coupon = self.get_object()
+        coupon.soft_delete()
+        return Response({"detail": "Coupon soft deleted successfully."}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def restore(self, request, pk=None):
+        """Restore a soft-deleted coupon."""
+        coupon = self.get_object()
+        coupon.restore()
+        return Response({"detail": "Coupon restored successfully."}, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        """Get coupon statistics and usage insights."""
+        coupons = self.get_queryset()
+        
+        total_coupons = coupons.count()
+        active_coupons = coupons.filter(is_active=True, deleted_at__isnull=True).count()
+        referral_coupons = coupons.filter(is_referral_reward=True).count()
+        first_order_coupons = coupons.filter(is_first_order_reward=True).count()
+        
+        total_redeemed = coupons.aggregate(models.Sum('used_count'))['used_count__sum'] or 0
+        
+        return Response({
+            "total_coupons": total_coupons,
+            "active_coupons": active_coupons,
+            "referral_coupons": referral_coupons,
+            "first_order_coupons": first_order_coupons,
+            "total_redeemed": total_redeemed,
+        }, status=status.HTTP_200_OK)
+
+
+class RewardConfigurationViewSet(viewsets.ModelViewSet):
+    """
+    Admin-only ViewSet for managing reward configuration and scales.
+    This is a singleton resource - there's only one configuration object.
+    
+    Allows admins to:
+    - View current reward configuration
+    - Update reward scales (referral %, first order %, validity periods, etc.)
+    - Enable/disable reward programs
+    """
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    queryset = RewardConfiguration.objects.all()
+    serializer_class = RewardConfigurationSerializer
+
+    def list(self, request):
+        """Get the current reward configuration."""
+        config = RewardConfiguration.get_config()
+        serializer = RewardConfigurationSerializer(config)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def retrieve(self, request, pk=None):
+        """Get specific reward configuration (always returns the singleton)."""
+        config = RewardConfiguration.get_config()
+        serializer = RewardConfigurationSerializer(config)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def update(self, request, pk=None):
+        """Update the reward configuration."""
+        config = RewardConfiguration.get_config()
+        serializer = RewardConfigurationSerializer(config, data=request.data, partial=False)
+        
+        if serializer.is_valid():
+            serializer.validated_data['updated_by'] = request.user
+            serializer.save()
+            return Response(
+                {
+                    "detail": "Reward configuration updated successfully.",
+                    "config": serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def partial_update(self, request, pk=None):
+        """Partially update the reward configuration (PATCH)."""
+        config = RewardConfiguration.get_config()
+        serializer = RewardConfigurationSerializer(config, data=request.data, partial=True)
+        
+        if serializer.is_valid():
+            serializer.validated_data['updated_by'] = request.user
+            serializer.save()
+            return Response(
+                {
+                    "detail": "Reward configuration updated successfully.",
+                    "config": serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'])
+    def reset_to_defaults(self, request):
+        """Reset reward configuration to default values."""
+        config = RewardConfiguration.get_config()
+        
+        # Reset to defaults
+        config.first_order_discount_type = 'percentage'
+        config.first_order_discount_value = 10.00
+        config.first_order_min_amount = 50.00
+        config.first_order_validity_days = 30
+        
+        config.referral_discount_type = 'percentage'
+        config.referral_discount_value = 15.00
+        config.referral_min_amount = 100.00
+        config.referral_validity_days = 60
+        config.referral_usage_limit = 1
+        
+        config.referrer_discount_value = 15.00
+        config.referrer_validity_days = 60
+        
+        config.max_discount_percentage = None
+        config.is_referral_active = True
+        config.is_first_order_active = True
+        config.updated_by = request.user
+        
+        config.save()
+        
+        serializer = RewardConfigurationSerializer(config)
+        return Response(
+            {
+                "detail": "Reward configuration reset to defaults.",
+                "config": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
