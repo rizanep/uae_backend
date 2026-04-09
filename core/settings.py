@@ -10,7 +10,7 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-+k1wieh3+)u!+gl^+2ck)
 
 DEBUG = os.environ.get('DEBUG', 'True').lower() == 'true'
 
-ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '72.61.243.154,localhost,127.0.0.1,https://uae-ecom-project-six.vercel.app/').split(',')
+ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '187.77.189.139,72.61.243.154,localhost,127.0.0.1,https://uae-ecom-project-six.vercel.app/').split(',')
 
 
 # Application definition
@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     'Orders.apps.OrdersConfig',
     'Reviews',
     'Notifications',
+    'django_filters',
     'Marketing.apps.MarketingConfig',
 ]
 
@@ -123,11 +124,14 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
-STATIC_URL = 'static/'
+
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Media files (user uploads)
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
-
 # Twilio Configuration
 TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
@@ -142,6 +146,13 @@ GOOGLE_OAUTH_REDIRECT_URI = os.environ.get(
     'GOOGLE_OAUTH_REDIRECT_URI',
     'http://localhost:8000/api/users/google/callback/'
 )
+
+# Ziina Payment Gateway
+ZIINA_API_KEY = os.environ.get('ZIINA_ID')
+ZIINA_TEST_MODE = os.environ.get('ZIINA_TEST_MODE', 'true').lower() == 'true'
+ZIINA_SUCCESS_URL = os.environ.get('ZIINA_SUCCESS_URL', 'http://localhost:3000/payment/success')
+ZIINA_CANCEL_URL = os.environ.get('ZIINA_CANCEL_URL', 'http://localhost:3000/payment/cancelled')
+ZIINA_FAILURE_URL = os.environ.get('ZIINA_FAILURE_URL', 'http://localhost:3000/payment/failed')
 
 # Custom user model
 AUTH_USER_MODEL = 'Users.User'
@@ -162,53 +173,19 @@ USE_REAL_SMTP = os.environ.get('USE_REAL_SMTP', 'false').lower() == 'false'
 
 # DRF configuration
 REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
-    'DEFAULT_PERMISSION_CLASSES': (
-        'rest_framework.permissions.AllowAny',
-    ),
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
-    'PAGE_SIZE': 20,
-    
-    # ========================================================================
-    # RATE LIMITING / THROTTLING CONFIGURATION
-    # ========================================================================
-    # Default throttle classes applied to all endpoints
-    'DEFAULT_THROTTLE_CLASSES': [
-        'core.throttling.CombinedGeneralThrottle',
-    ],
-    
-    # Rate limit configurations (format: 'num_requests/time_period')
-    # Time periods: second, minute, hour, day
-    'DEFAULT_THROTTLE_RATES': {
-        # General API endpoints
-        'user_general': '1000/hour',
-        'anon_general': '200/hour',
-        
-        # Authentication operations
-        'user_auth': '50/hour',
-        'anon_auth': '30/hour',
-        
-        # OTP operations (very strict - brute force protection)
-        'anon_otp': '5/hour',
-        
-        # Order operations
-        'user_order': '100/hour',
-        
-        # Payment operations (very strict - fraud prevention)
-        'user_payment': '30/hour',
-        
-        # Review/Rating operations
-        'user_review': '20/hour',
-        
-        # Contact/Support messages (very strict)
-        'user_contact': '10/hour',
-        'anon_contact': '3/hour',
-    },
-    # ========================================================================
-}
 
+    "DEFAULT_PERMISSION_CLASSES": (
+        "rest_framework.permissions.AllowAny",
+    ),
+
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
+    "PAGE_SIZE": 10,
+
+
+}
 # SimpleJWT basic settings
 from datetime import timedelta
 SIMPLE_JWT = {
@@ -244,3 +221,88 @@ else:
             "TIMEOUT": CACHE_DEFAULT_TIMEOUT,
         }
     }
+
+# ============================================================================
+# LOGGING CONFIGURATION
+# ============================================================================
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
+        },
+        'simple': {
+            'format': '{levelname} {asctime} {message}',
+            'style': '{',
+            'datefmt': '%Y-%m-%d %H:%M:%S',
+        },
+    },
+    'filters': {
+        'require_debug_false': {
+            '()': 'django.utils.log.RequireDebugFalse',
+        },
+        'require_debug_true': {
+            '()': 'django.utils.log.RequireDebugTrue',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+        'file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': os.path.join(BASE_DIR, 'logs', 'debug.log'),
+            'maxBytes': 1024 * 1024 * 10,  # 10MB
+            'backupCount': 10,
+            'formatter': 'verbose',
+        },
+        'webhook_file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': os.path.join(BASE_DIR, 'logs', 'webhooks.log'),
+            'maxBytes': 1024 * 1024 * 10,  # 10MB
+            'backupCount': 10,
+            'formatter': 'verbose',
+        },
+        'payment_file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': os.path.join(BASE_DIR, 'logs', 'payments.log'),
+            'maxBytes': 1024 * 1024 * 10,  # 10MB
+            'backupCount': 10,
+            'formatter': 'verbose',
+        },
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'Orders.webhook': {
+            'handlers': ['console', 'webhook_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'Orders.payment': {
+            'handlers': ['console', 'payment_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    }
+}
+
+# Create logs directory if it doesn't exist
+LOGS_DIR = os.path.join(BASE_DIR, 'logs')
+if not os.path.exists(LOGS_DIR):
+    os.makedirs(LOGS_DIR)
+
+# Ziina Webhook Secret
+ZIINA_WEBHOOK_SECRET = os.environ.get('WEBHOOK_SECRET')

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import User, OTPToken, GoogleOAuthToken, UserProfile, UserAddress
+from .models import User, OTPToken, GoogleOAuthToken, UserProfile, UserAddress, DeliveryBoyProfile, UAE_EMIRATE_CHOICES
 
 
 @admin.register(User)
@@ -61,3 +61,20 @@ class UserAddressAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         queryset = super().get_queryset(request)
         return queryset.select_related('user')
+
+
+@admin.register(DeliveryBoyProfile)
+class DeliveryBoyProfileAdmin(admin.ModelAdmin):
+    list_display = ('user', 'is_available', 'emirates_summary', 'vehicle_number', 'updated_at')
+    list_filter = ('is_available',)
+    search_fields = ('user__email', 'user__phone_number', 'vehicle_number', 'identity_number')
+    readonly_fields = ('created_at', 'updated_at')
+
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        return queryset.select_related('user')
+
+    def emirates_summary(self, obj):
+        emirate_map = dict(UAE_EMIRATE_CHOICES)
+        return ', '.join(emirate_map.get(code, code) for code in (obj.assigned_emirates or [])) or '-'
+    emirates_summary.short_description = 'assigned emirates'

@@ -10,8 +10,14 @@ from django.contrib.auth import authenticate
 from django.utils import timezone
 from django.conf import settings
 from django.core.files.base import ContentFile
+from django.db import IntegrityError, transaction
 import json
 import requests
+import logging
+import jwt
+from datetime import datetime
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
 
 from .models import User, GoogleOAuthToken, OTPToken, UserProfile, UserAddress
 from .serializers import (
@@ -22,6 +28,7 @@ from .serializers import (
 )
 from .permissions import IsOwnerOrAdmin, IsAdmin
 from core.rate_limit_utils import throttle_auth_view, throttle_otp_view
+from Marketing.services import apply_referral_code
 from core.throttling import (
     UserAuthThrottle, AnonAuthThrottle,
     UserGeneralThrottle, AnonGeneralThrottle
@@ -165,9 +172,9 @@ class UserViewSet(viewsets.ModelViewSet):
         user = self.get_object()
         role = request.data.get('role')
         
-        if role not in ['admin', 'user']:
+        if role not in ['admin', 'user', 'delivery_boy']:
             return Response(
-                {'detail': 'Invalid role. Must be "admin" or "user".'},
+                {'detail': 'Invalid role. Must be "admin", "user", or "delivery_boy".'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -242,6 +249,7 @@ class LoginView(TokenObtainPairView):
     - Issues JWT tokens
     - Sets HttpOnly cookies for tokens
     - Updates last login time
+    - Handles referral code application with coupon creation
     """
     serializer_class = CustomTokenObtainPairSerializer
     permission_classes = [permissions.AllowAny]
@@ -249,6 +257,9 @@ class LoginView(TokenObtainPairView):
     def post(self, request, *args, **kwargs):
         # Check user active status
         email = request.data.get('email')
+        phone = request.data.get('phone_number')
+        referral_code = request.data.get('referral_code', '').strip()
+        
         if email:
             user = User.objects.filter(email=email).first()
             if user and not user.is_active:
@@ -282,7 +293,39 @@ class LoginView(TokenObtainPairView):
                     secure=settings.DEBUG is False,
                     samesite='Lax',
                 )
-        
+            
+            # Handle referral code after successful login
+            if referral_code:
+                # Try to get user by email first, then by phone
+                user = None
+                if email:
+                    user = User.objects.filter(email=email).first()
+                elif phone:
+                    user = User.objects.filter(phone_number=phone).first()
+                
+                if user:
+                    try:
+                        success, message = apply_referral_code(user, referral_code)
+                        response.data['referral'] = {
+                            'success': success,
+                            'message': message
+                        }
+                        if success:
+                            response.data['detail'] = 'Login successful. Referral code applied and coupons created!'
+                        else:
+                            # Add warning if referral failed but login succeeded
+                            response.data['detail'] = 'Login successful but referral code could not be applied.'
+                    except Exception as e:
+                        response.data['referral'] = {
+                            'success': False,
+                            'message': f'Error applying referral code: {str(e)}'
+                        }
+                else:
+                    response.data['referral'] = {
+                        'success': False,
+                        'message': 'User not found to apply referral code'
+                    }
+            
         return response
 
 
@@ -335,7 +378,6 @@ class RefreshView(TokenRefreshView):
         return response
 
 
-@throttle_auth_view
 class LogoutView(APIView):
     """
     Logout view
@@ -396,48 +438,111 @@ class GoogleAuthCallbackView(APIView):
             )
         return self._handle_code(code)
 
+    def _verify_google_token(self, token):
+        """
+        Verify and decode Google ID token (JWT) using Google's official library.
+        
+        Args:
+            token: Google ID token from frontend
+            
+        Returns:
+            dict: Decoded token payload with user info
+            
+        Raises:
+            ValueError: If token is invalid
+        """
+        try:
+            # Use Google's official library to verify the token
+            request = google_requests.Request()
+            payload = id_token.verify_oauth2_token(
+                token,
+                request,
+                audience=settings.GOOGLE_OAUTH_CLIENT_ID
+            )
+            
+            # Additional validation
+            if payload.get('iss') not in ['https://accounts.google.com', 'accounts.google.com']:
+                raise ValueError('Invalid token issuer')
+            
+            return payload
+            
+        except ValueError as e:
+            # Re-raise with more specific message
+            error_msg = str(e)
+            if 'expired' in error_msg.lower():
+                raise ValueError('Token has expired')
+            elif 'audience' in error_msg.lower():
+                raise ValueError(f'Invalid token audience. Expected {settings.GOOGLE_OAUTH_CLIENT_ID}')
+            else:
+                raise ValueError(f'Invalid token: {error_msg}')
+        except Exception as e:
+            raise ValueError(f'Token verification failed: {str(e)}')
+
     def _handle_code(self, code):
         try:
-            token_url = 'https://oauth2.googleapis.com/token'
-
-            token_data = {
-                'code': code,
-                'client_id': settings.GOOGLE_OAUTH_CLIENT_ID,
-                'client_secret': settings.GOOGLE_OAUTH_CLIENT_SECRET,
-                'redirect_uri': settings.GOOGLE_OAUTH_REDIRECT_URI,
-                'grant_type': 'authorization_code',
-            }
-            print("ldsf",token_data)
-            token_response = requests.post(token_url, data=token_data)
-            token_response.raise_for_status()
-            tokens = token_response.json()
-
-            access_token = tokens['access_token']
-            userinfo_url = 'https://www.googleapis.com/oauth2/v2/userinfo'
-            userinfo_response = requests.get(
-                userinfo_url,
-                headers={'Authorization': f'Bearer {access_token}'}
-            )
-            userinfo_response.raise_for_status()
-            userinfo = userinfo_response.json()
-
-            google_id = userinfo['id']
-            email = userinfo['email']
+            # Debug: Log the token format
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Google token received - Type: {type(code)}, Length: {len(code) if isinstance(code, str) else 'N/A'}")
+            
+            if not isinstance(code, str) or not code.strip():
+                raise ValueError('Token must be a non-empty string')
+            
+            # Count segments for JWT validation
+            segments = code.strip().count('.')
+            if segments != 2:
+                logger.error(f"Invalid JWT format. Expected 3 segments (2 dots), got {segments + 1}")
+                raise ValueError(f'Invalid token format. Expected JWT with 3 segments, got {segments + 1}. Token may not be a valid Google ID token.')
+            
+            # Verify the Google ID token (JWT)
+            userinfo = self._verify_google_token(code)
+            
+            google_id = userinfo['sub']  # 'sub' is the Google user ID in JWT
+            email = userinfo.get('email', '')
             first_name = userinfo.get('given_name', '')
             last_name = userinfo.get('family_name', '')
             picture_url = userinfo.get('picture')
             locale = userinfo.get('locale')
 
-            user, created = User.objects.get_or_create(
-                google_id=google_id,
-                defaults={
-                    'email': email,
-                    'first_name': first_name,
-                    'last_name': last_name,
-                    'google_email': email,
-                    'is_email_verified': True,
-                }
-            )
+            with transaction.atomic():
+                user = User.objects.filter(google_id=google_id).first()
+                created = False
+
+                if not user and email:
+                    # Link Google login to an existing account with the same email.
+                    user = User.objects.filter(email=email).first()
+
+                if user:
+                    # If google_id differs but email matches verified Google email,
+                    # re-link to the latest provider id for this account.
+                    user.google_id = google_id
+                    user.email = email
+                    user.first_name = first_name
+                    user.last_name = last_name
+                    user.google_email = email
+                    user.is_email_verified = True
+                    user.save()
+                else:
+                    created = True
+                    try:
+                        user = User.objects.create_user(
+                            email=email,
+                            password=None,
+                            first_name=first_name,
+                            last_name=last_name,
+                            google_id=google_id,
+                            google_email=email,
+                            is_email_verified=True,
+                        )
+                    except IntegrityError:
+                        # Handle race conditions safely by reloading existing user.
+                        user = User.objects.filter(email=email).first()
+                        if not user:
+                            raise
+                        created = False
+                        user.google_id = google_id
+                        user.google_email = email
+                        user.is_email_verified = True
+                        user.save(update_fields=['google_id', 'google_email', 'is_email_verified'])
 
             if not user.is_active:
                 return Response(
@@ -450,7 +555,16 @@ class GoogleAuthCallbackView(APIView):
                 user.first_name = first_name
                 user.last_name = last_name
                 user.google_email = email
+                user.is_email_verified = True
                 user.save()
+            else:
+                # Create first order coupon for new Google OAuth user
+                from Marketing.services import create_first_order_coupon
+                try:
+                    create_first_order_coupon(user)
+                except Exception as e:
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Failed to create first order coupon for Google OAuth user {user.id}: {str(e)}")
 
             profile, _ = UserProfile.objects.get_or_create(user=user)
 
@@ -471,18 +585,9 @@ class GoogleAuthCallbackView(APIView):
 
             profile.save()
 
-            expires_in = tokens.get('expires_in', 3600)
-            expires_at = timezone.now() + timezone.timedelta(seconds=expires_in)
-
-            GoogleOAuthToken.objects.update_or_create(
-                user=user,
-                defaults={
-                    'access_token': access_token,
-                    'refresh_token': tokens.get('refresh_token', ''),
-                    'expires_at': expires_at,
-                }
-            )
-
+            # No need to store Google tokens when using ID token flow
+            # The ID token is validated directly
+            
             refresh = RefreshToken.for_user(user)
 
             response = Response(
@@ -513,6 +618,15 @@ class GoogleAuthCallbackView(APIView):
 
             return response
 
+        except ValueError as e:
+            # Token verification failed
+            return Response(
+                {
+                    'detail': 'Failed to verify Google token',
+                    'error': str(e),
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
         except requests.RequestException as e:
             error_detail = str(e)
             error_body = None
@@ -536,8 +650,6 @@ class GoogleAuthCallbackView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-
-@throttle_otp_view
 class OTPRequestView(APIView):
     """
     Request OTP for authentication.
@@ -591,8 +703,6 @@ class OTPRequestView(APIView):
             status=status.HTTP_200_OK
         )
 
-
-@throttle_otp_view
 class OTPLoginView(APIView):
     """
     Login with OTP verification.
@@ -679,12 +789,33 @@ class OTPLoginView(APIView):
                 secure=settings.DEBUG is False,
                 samesite='Lax',
             )
+            
+            # Handle referral code if provided
+            referral_code = request.data.get('referral_code', '').strip()
+            if referral_code:
+                try:
+                    success, message = apply_referral_code(user, referral_code)
+                    response.data['referral'] = {
+                        'success': success,
+                        'message': message
+                    }
+                    if success:
+                        response.data['detail'] = 'Login successful. Referral code applied and coupons created!'
+                    else:
+                        response.data['detail'] = 'Login successful but referral code could not be applied.'
+                except Exception as e:
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Error applying referral code in OTP login: {str(e)}")
+                    response.data['referral'] = {
+                        'success': False,
+                        'message': f'Error applying referral code: {str(e)}'
+                    }
+            
             return response
         except Exception as e:
             return Response({'detail': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-@throttle_auth_view
 class VerifyNewContactView(APIView):
     """
     Verify and update new contact information (email/phone).

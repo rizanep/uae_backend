@@ -97,14 +97,20 @@ class CategoryViewSet(viewsets.ModelViewSet):
         return result
 
 
+
 class ProductFilter(django_filters.FilterSet):
-    min_price = django_filters.NumberFilter(field_name="price", lookup_expr='gte')
-    max_price = django_filters.NumberFilter(field_name="price", lookup_expr='lte')
+
+    min_price = django_filters.NumberFilter(field_name="price", lookup_expr="gte")
+    max_price = django_filters.NumberFilter(field_name="price", lookup_expr="lte")
+
     category_slug = django_filters.CharFilter(field_name="category__slug")
+
+    available_emirates = django_filters.CharFilter(method="filter_emirates")
 
     class Meta:
         model = Product
         fields = "__all__"
+
         filter_overrides = {
             models.ImageField: {
                 "filter_class": django_filters.CharFilter,
@@ -112,10 +118,10 @@ class ProductFilter(django_filters.FilterSet):
             models.FileField: {
                 "filter_class": django_filters.CharFilter,
             },
-            models.JSONField: {
-                "filter_class": django_filters.CharFilter,
-            },
         }
+    def filter_emirates(self, queryset, name, value):
+    	emirates = value.split(",")
+    	return queryset.filter(available_emirates__overlap=emirates)
 
 class ProductViewSet(viewsets.ModelViewSet):
     queryset = Product.objects.filter(deleted_at__isnull=True, is_available=True).select_related('category').prefetch_related('images', 'videos', 'discount_tiers', 'delivery_tiers')

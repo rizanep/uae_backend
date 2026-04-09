@@ -26,6 +26,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     profile = UserProfileSerializer(read_only=True)
+    delivery_profile = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -45,6 +46,7 @@ class UserSerializer(serializers.ModelSerializer):
             'deleted_at',
             'last_login_at',
             'profile',
+            'delivery_profile',
             'referral_code',
         ]
         read_only_fields = [
@@ -59,6 +61,20 @@ class UserSerializer(serializers.ModelSerializer):
             'last_login_at',
             'referral_code',
         ]
+
+    def get_delivery_profile(self, obj):
+        delivery_profile = getattr(obj, 'delivery_profile', None)
+        if not delivery_profile:
+            return None
+        return {
+            'is_available': delivery_profile.is_available,
+            'assigned_emirates': delivery_profile.assigned_emirates,
+            'assigned_emirates_display': delivery_profile.assigned_emirates_display,
+            'vehicle_number': delivery_profile.vehicle_number,
+            'identity_number': delivery_profile.identity_number,
+            'emergency_contact': delivery_profile.emergency_contact,
+            'notes': delivery_profile.notes,
+        }
 
 
 class UserCreateSerializer(serializers.ModelSerializer):
@@ -110,6 +126,26 @@ class UserCreateSerializer(serializers.ModelSerializer):
             password=None,
             **extra_fields
         )
+        
+        # Create first order welcome coupon
+        from Marketing.services import create_first_order_coupon, grant_referral_rewards
+        try:
+            create_first_order_coupon(user)
+        except Exception as e:
+            # Log error but don't fail user creation
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to create first order coupon for user {user.id}: {str(e)}")
+        
+        # If user was referred, grant referral rewards
+        if referrer:
+            try:
+                grant_referral_rewards(referrer, user)
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to grant referral rewards for user {user.id}: {str(e)}")
+        
         return user
 
 
@@ -220,6 +256,7 @@ class OTPRequestSerializer(serializers.Serializer):
         first_name = validated_data.get('first_name', '')
         last_name = validated_data.get('last_name', '')
         otp_type = validated_data.get('otp_type')
+        is_new_user = False
 
         # Try to find existing user
         if otp_type == 'email':
@@ -232,9 +269,7 @@ class OTPRequestSerializer(serializers.Serializer):
             user = self.context['request'].user
 
         if not user:
-            # if not email:
-            #     normalized_phone = (phone_number or "").strip().lstrip("+")
-            #     email = f"phone_{normalized_phone}@otp.local"
+            # Create new user
             user = User.objects.create_user(
                 email=email,
                 password=None,
@@ -242,6 +277,7 @@ class OTPRequestSerializer(serializers.Serializer):
                 first_name=first_name,
                 last_name=last_name,
             )
+            is_new_user = True
 
         # Generate 6 digit OTP
         if settings.USE_REAL_TWILIO_OTP and otp_type == 'phone':
@@ -249,8 +285,7 @@ class OTPRequestSerializer(serializers.Serializer):
         else:
             code = "000000"
             
-        # Save OTP to database (we need a user, so if user is None, we might fail)
-        # Let's assume user must exist for Login via OTP.
+        # Save OTP to database
         if not user:
             raise serializers.ValidationError("User not found. Please register first.")
 
@@ -266,6 +301,18 @@ class OTPRequestSerializer(serializers.Serializer):
             phone_number=phone_number,
             expires_at=expires_at,
         )
+        
+        # Create first order welcome coupon for new users
+        if is_new_user:
+            from Marketing.services import create_first_order_coupon
+            try:
+                create_first_order_coupon(user)
+            except Exception as e:
+                # Log error but don't fail OTP creation
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to create first order coupon for user {user.id}: {str(e)}")
+        
         return otp
 
 

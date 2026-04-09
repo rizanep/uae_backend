@@ -226,13 +226,13 @@ class CombinedContactThrottle(tuple):
         return (UserContactThrottle(), AnonContactThrottle())
 
 
-class CombinedGeneralThrottle(tuple):
-    """
-    Combined throttle for general API endpoints.
-    """
-    def __new__(cls):
-        return (UserGeneralThrottle(), AnonGeneralThrottle())
+from rest_framework.throttling import UserRateThrottle, AnonRateThrottle
 
+class CombinedGeneralThrottle(UserRateThrottle):
+    scope = "user_general"
+
+class CombinedAnonThrottle(AnonRateThrottle):
+    scope = "anon_general"
 
 # ============================================================================
 # RATE LIMIT CONFIGURATION CONSTANTS

@@ -1,5 +1,15 @@
 from django.contrib import admin
-from .models import Order, OrderItem, OrderStatusHistory, Payment, Receipt, DeliveryChargeConfig
+from .models import (
+    Order,
+    OrderItem,
+    OrderStatusHistory,
+    Payment,
+    Receipt,
+    DeliveryChargeConfig,
+    DeliveryAssignment,
+    DeliveryCancellationRequest,
+    DeliveryProof,
+)
 
 class OrderItemInline(admin.TabularInline):
     model = OrderItem
@@ -19,12 +29,18 @@ class PaymentInline(admin.StackedInline):
     readonly_fields = ["created_at", "updated_at"]
 
 
+class DeliveryAssignmentInline(admin.StackedInline):
+    model = DeliveryAssignment
+    extra = 0
+    readonly_fields = ["assigned_at", "accepted_at", "delivered_at"]
+
+
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
     list_display = ["id", "user", "status", "total_amount", "created_at", "tip_amount"]
     list_filter = ["status", "created_at"]
     search_fields = ["id", "user__email", "user__phone_number"]
-    inlines = [OrderItemInline, OrderStatusHistoryInline, PaymentInline]
+    inlines = [OrderItemInline, OrderStatusHistoryInline, PaymentInline, DeliveryAssignmentInline]
     readonly_fields = ["total_amount", "created_at", "updated_at"]
     
     def get_queryset(self, request):
@@ -45,7 +61,7 @@ class OrderAdmin(admin.ModelAdmin):
 class PaymentAdmin(admin.ModelAdmin):
     list_display = ["order", "transaction_id", "amount", "status", "created_at"]
     list_filter = ["status", "payment_method"]
-    search_fields = ["transaction_id", "telr_reference", "order__id"]
+    search_fields = ["transaction_id", "ziina_payment_intent_id", "order__id"]
     
     def get_queryset(self, request):
         queryset = super().get_queryset(request)
@@ -90,3 +106,26 @@ class DeliveryChargeConfigAdmin(admin.ModelAdmin):
     def save_model(self, request, obj, form, change):
         obj.updated_by = request.user
         super().save_model(request, obj, form, change)
+
+
+@admin.register(DeliveryAssignment)
+class DeliveryAssignmentAdmin(admin.ModelAdmin):
+    list_display = ["order", "delivery_boy", "status", "assigned_by", "assigned_at", "delivered_at"]
+    list_filter = ["status", "assigned_at"]
+    search_fields = ["order__id", "delivery_boy__email", "delivery_boy__phone_number"]
+    readonly_fields = ["assigned_at", "accepted_at", "delivered_at"]
+
+
+@admin.register(DeliveryCancellationRequest)
+class DeliveryCancellationRequestAdmin(admin.ModelAdmin):
+    list_display = ["order", "requested_by", "status", "requested_at", "reviewed_by", "reviewed_at"]
+    list_filter = ["status", "requested_at", "reviewed_at"]
+    search_fields = ["order__id", "requested_by__email", "requested_by__phone_number"]
+    readonly_fields = ["requested_at", "reviewed_at"]
+
+
+@admin.register(DeliveryProof)
+class DeliveryProofAdmin(admin.ModelAdmin):
+    list_display = ["order", "assignment", "uploaded_by", "created_at"]
+    search_fields = ["order__id", "uploaded_by__email", "uploaded_by__phone_number"]
+    readonly_fields = ["created_at"]
