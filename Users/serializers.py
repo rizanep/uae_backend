@@ -1,7 +1,7 @@
 from django.contrib.auth import authenticate
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import User, UserProfile, OTPToken, UserAddress
+from .models import User, UserProfile, OTPToken, UserAddress, DeliveryBoyProfile
 from django.utils import timezone
 from datetime import timedelta
 import random
@@ -430,3 +430,170 @@ class UserAddressSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = ['id', 'user', 'created_at', 'updated_at']
+
+
+class DeliveryBoyProfileSerializer(serializers.ModelSerializer):
+    """Serializer for delivery boy profile"""
+    class Meta:
+        model = DeliveryBoyProfile
+        fields = [
+            'id',
+            'user',
+            'assigned_emirates',
+            'is_available',
+            'identity_number',
+            'vehicle_number',
+            'emergency_contact',
+            'notes',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'user', 'created_at', 'updated_at']
+
+
+class DeliveryBoyCreateSerializer(serializers.Serializer):
+    """
+    Admin-only serializer for creating a delivery boy with user account and profile.
+    Creates a User with role='delivery_boy' and associated DeliveryBoyProfile.
+    """
+    # User fields
+    email = serializers.EmailField(required=True)
+    phone_number = serializers.CharField(required=True, max_length=20)
+    first_name = serializers.CharField(required=True, max_length=150)
+    last_name = serializers.CharField(required=True, max_length=150)
+    
+    # Delivery Profile fields
+    assigned_emirates = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        default=list,
+        help_text='List of emirate codes (e.g., ["abu_dhabi", "dubai"])'
+    )
+    identity_number = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    vehicle_number = serializers.CharField(required=False, allow_blank=True, max_length=50)
+    emergency_contact = serializers.CharField(required=False, allow_blank=True, max_length=20)
+    notes = serializers.CharField(required=False, allow_blank=True, style={'base_template': 'textarea.html'})
+    is_available = serializers.BooleanField(required=False, default=True)
+
+    def validate(self, attrs):
+        """Validate email and phone uniqueness"""
+        email = attrs.get('email')
+        phone = attrs.get('phone_number')
+        
+        if User.objects.filter(email=email, deleted_at__isnull=True).exists():
+            raise serializers.ValidationError({'email': 'A user with this email already exists.'})
+        
+        if User.objects.filter(phone_number=phone, deleted_at__isnull=True).exists():
+            raise serializers.ValidationError({'phone_number': 'A user with this phone number already exists.'})
+
+        profile = DeliveryBoyProfile(
+            assigned_emirates=attrs.get('assigned_emirates', []),
+            identity_number=attrs.get('identity_number', ''),
+            vehicle_number=attrs.get('vehicle_number', ''),
+            emergency_contact=attrs.get('emergency_contact', ''),
+            notes=attrs.get('notes', ''),
+            is_available=attrs.get('is_available', True),
+        )
+        profile.clean()
+        
+        return attrs
+
+    def create(self, validated_data):
+        from django.db import transaction
+        
+        # Extract user and profile data
+        email = validated_data.pop('email')
+        phone_number = validated_data.pop('phone_number')
+        first_name = validated_data.pop('first_name')
+        last_name = validated_data.pop('last_name')
+        
+        assigned_emirates = validated_data.pop('assigned_emirates', [])
+        identity_number = validated_data.pop('identity_number', '')
+        vehicle_number = validated_data.pop('vehicle_number', '')
+        emergency_contact = validated_data.pop('emergency_contact', '')
+        notes = validated_data.pop('notes', '')
+        is_available = validated_data.pop('is_available', True)
+        
+        try:
+            with transaction.atomic():
+                # Create user with delivery_boy role
+                user = User.objects.create_user(
+                    email=email,
+                    phone_number=phone_number,
+                    first_name=first_name,
+                    last_name=last_name,
+                    password=None,  # No password - they'll use Google OAuth or OTP
+                    role='delivery_boy'
+                )
+                
+                # Signal auto-creates DeliveryBoyProfile for delivery_boy users.
+                profile, _ = DeliveryBoyProfile.objects.get_or_create(user=user)
+                profile.assigned_emirates = assigned_emirates
+                profile.identity_number = identity_number
+                profile.vehicle_number = vehicle_number
+                profile.emergency_contact = emergency_contact
+                profile.notes = notes
+                profile.is_available = is_available
+                profile.full_clean()
+                profile.save()
+
+                return User.objects.select_related('profile', 'delivery_profile').get(pk=user.pk)
+        except Exception as e:
+            raise serializers.ValidationError({'detail': f'Failed to create delivery boy: {str(e)}'})
+
+    def to_representation(self, instance):
+        """Return full user data including delivery profile"""
+        return UserSerializer(instance).data
+
+
+class DeliveryBoyUpdateSerializer(serializers.Serializer):
+    """Admin-only serializer for updating a delivery boy user and profile."""
+    email = serializers.EmailField(required=False)
+    phone_number = serializers.CharField(required=False, max_length=20)
+    first_name = serializers.CharField(required=False, max_length=150)
+    last_name = serializers.CharField(required=False, max_length=150)
+    is_active = serializers.BooleanField(required=False)
+    assigned_emirates = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text='List of emirate codes (e.g., ["abu_dhabi", "dubai"])'
+    )
+    identity_number = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=100)
+    vehicle_number = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=50)
+    emergency_contact = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=20)
+    notes = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    is_available = serializers.BooleanField(required=False)
+
+    def validate(self, attrs):
+        user = self.context['delivery_boy']
+        email = attrs.get('email')
+        phone = attrs.get('phone_number')
+
+        if email and User.objects.filter(email=email, deleted_at__isnull=True).exclude(pk=user.pk).exists():
+            raise serializers.ValidationError({'email': 'A user with this email already exists.'})
+
+        if phone and User.objects.filter(phone_number=phone, deleted_at__isnull=True).exclude(pk=user.pk).exists():
+            raise serializers.ValidationError({'phone_number': 'A user with this phone number already exists.'})
+
+        profile = getattr(user, 'delivery_profile', DeliveryBoyProfile(user=user))
+        for field in ['assigned_emirates', 'identity_number', 'vehicle_number', 'emergency_contact', 'notes', 'is_available']:
+            if field in attrs:
+                setattr(profile, field, attrs[field])
+        profile.clean()
+
+        return attrs
+
+    def update(self, instance, validated_data):
+        for field in ['email', 'phone_number', 'first_name', 'last_name', 'is_active']:
+            if field in validated_data:
+                setattr(instance, field, validated_data[field])
+        instance.save()
+
+        profile, _ = DeliveryBoyProfile.objects.get_or_create(user=instance)
+        for field in ['assigned_emirates', 'identity_number', 'vehicle_number', 'emergency_contact', 'notes', 'is_available']:
+            if field in validated_data:
+                setattr(profile, field, validated_data[field])
+        profile.full_clean()
+        profile.save()
+
+        return User.objects.select_related('profile', 'delivery_profile').get(pk=instance.pk)
