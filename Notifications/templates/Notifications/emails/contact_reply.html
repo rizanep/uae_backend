@@ -1,0 +1,45 @@
+{% extends "Notifications/emails/base.html" %}
+
+{% block title %}Response to Your Message - Simak Fresh{% endblock %}
+
+{% block page_title %}We Have Responded to Your Message{% endblock %}
+
+{% block content %}
+<div class="highlight">
+    <h2>💬 Response to Your Message</h2>
+    <p>Dear {{ contact_name }},</p>
+</div>
+
+<div style="margin: 20px 0;">
+    <p>Thank you for contacting Simak Fresh. We have received your message and would like to provide the following response:</p>
+
+    <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #007bff;">
+        <h4>Your Original Message:</h4>
+        <p style="font-style: italic; color: #495057;">"{{ original_message }}"</p>
+    </div>
+
+    <div style="background-color: #e7f3ff; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #28a745;">
+        <h4>Our Response:</h4>
+        <p>{{ reply_message }}</p>
+    </div>
+
+    {% if is_resolved %}
+    <div style="background-color: #d4edda; color: #155724; padding: 15px; border-radius: 5px; margin: 20px 0; border: 1px solid #c3e6cb;">
+        <strong>✅ Status:</strong> Your inquiry has been marked as resolved.
+    </div>
+    {% endif %}
+
+    <p>If you have any further questions or need additional assistance, please don't hesitate to contact us again.</p>
+
+    <div style="text-align: center; margin: 30px 0;">
+        <a href="{{ site_url }}/contact" class="button">Contact Us Again</a>
+    </div>
+</div>
+
+<div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+    <h4>Need Help?</h4>
+    <p>Our customer service team is here to help you with any questions or concerns.</p>
+    <p><strong>Email:</strong> support@simakfresh.com</p>
+    <p><strong>Phone:</strong> +971 XX XXX XXXX</p>
+</div>
+{% endblock %}

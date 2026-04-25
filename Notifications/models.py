@@ -90,3 +90,38 @@ class ContactMessage(TimestampedModel):
 
     def __str__(self):
         return f"{self.subject} - {self.email}"
+
+
+class DeviceType(models.TextChoices):
+    WEB = 'WEB', _('Web')
+    ANDROID = 'ANDROID', _('Android')
+    IOS = 'IOS', _('iOS')
+
+
+class FCMDevice(TimestampedModel):
+    """
+    Stores FCM registration tokens for push notifications.
+    A user can have multiple devices/tokens.
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="fcm_devices",
+    )
+    registration_token = models.TextField(_("FCM registration token"), unique=True)
+    device_type = models.CharField(
+        _("device type"),
+        max_length=10,
+        choices=DeviceType.choices,
+        default=DeviceType.WEB,
+    )
+    device_name = models.CharField(_("device name"), max_length=255, blank=True)
+    is_active = models.BooleanField(_("is active"), default=True)
+
+    class Meta:
+        verbose_name = _("FCM Device")
+        verbose_name_plural = _("FCM Devices")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user} - {self.device_type} ({self.registration_token[:20]}...)"

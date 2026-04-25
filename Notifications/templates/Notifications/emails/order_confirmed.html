@@ -1,0 +1,76 @@
+{% extends "Notifications/emails/base.html" %}
+
+{% block title %}Order Confirmed - Simak Fresh{% endblock %}
+
+{% block page_title %}Your Order Has Been Confirmed!{% endblock %}
+
+{% block content %}
+<div class="highlight">
+    <h2>✅ Order Confirmed</h2>
+    <p>Dear {{ order.user.first_name|default:order.user.email }},</p>
+    <p>Great news! Your order has been confirmed and payment has been successfully processed.</p>
+</div>
+
+<div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+    <h3 style="margin-top: 0; color: #28a745;">Order Details:</h3>
+    <table style="width: 100%; border-collapse: collapse;">
+        <tr>
+            <td style="padding: 8px 0; border-bottom: 1px solid #dee2e6;"><strong>Order ID:</strong></td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #dee2e6;">{{ order.id }}</td>
+        </tr>
+        <tr>
+            <td style="padding: 8px 0; border-bottom: 1px solid #dee2e6;"><strong>Order Date:</strong></td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #dee2e6;">{{ order.created_at|date:"M d, Y" }}</td>
+        </tr>
+        <tr>
+            <td style="padding: 8px 0; border-bottom: 1px solid #dee2e6;"><strong>Total Amount:</strong></td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #dee2e6; color: #28a745; font-weight: bold;">AED {{ order.total_amount }}</td>
+        </tr>
+        {% if order.delivery_date and order.delivery_slot %}
+        <tr>
+            <td style="padding: 8px 0; border-bottom: 1px solid #dee2e6;"><strong>Delivery:</strong></td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #dee2e6;">{{ order.delivery_date|date:"M d, Y" }} - {{ order.delivery_slot.name }}</td>
+        </tr>
+        {% endif %}
+    </table>
+</div>
+
+<div style="margin: 20px 0;">
+    <h3>Items Ordered:</h3>
+    <div style="border: 1px solid #dee2e6; border-radius: 5px; overflow: hidden;">
+        {% for item in order.items.all %}
+        <div style="padding: 15px; border-bottom: 1px solid #dee2e6; {% if forloop.last %}border-bottom: none;{% endif %}">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <strong>{{ item.product_name }}</strong>
+                    <br>
+                    <span style="color: #6c757d; font-size: 14px;">Quantity: {{ item.quantity }} × AED {{ item.price }}</span>
+                </div>
+                <div style="text-align: right;">
+                    <strong style="color: #28a745;">AED {{ item.subtotal }}</strong>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+{% if order.shipping_address %}
+<div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
+    <h4 style="margin-top: 0; color: #856404;">Delivery Address:</h4>
+    <p style="margin: 5px 0; color: #856404;">
+        {{ order.shipping_address.street_address }}<br>
+        {{ order.shipping_address.city }}, {{ order.shipping_address.emirate }}<br>
+        {{ order.shipping_address.phone_number }}
+    </p>
+</div>
+{% endif %}
+
+<div style="text-align: center; margin: 30px 0;">
+    <a href="{{ site_url }}/orders/{{ order.id }}" class="button">View Order Details</a>
+</div>
+
+<p style="color: #6c757d; font-size: 14px;">
+    We'll send you another email when your order is out for delivery. If you have any questions, please don't hesitate to contact our customer service team.
+</p>
+{% endblock %}

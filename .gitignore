@@ -12,6 +12,7 @@ __pycache__/
 *.egg-info/
 .env.*
 .DS_Store
+firebase-credentials.json
 node_modules/
 coverage/
 htmlcov/

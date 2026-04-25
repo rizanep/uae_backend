@@ -1,0 +1,37 @@
+{% extends "Notifications/emails/base.html" %}
+
+{% block title %}Verify Your Email - Simak Fresh{% endblock %}
+
+{% block page_title %}Email Verification Code{% endblock %}
+
+{% block content %}
+<div class="highlight">
+    <h2>🔐 Verify Your Email Address</h2>
+    <p>Hello {{ user.first_name|default:"there" }}!</p>
+    <p>Thank you for choosing Simak Fresh. To complete your verification, please use the code below:</p>
+</div>
+
+<div style="text-align: center; margin: 30px 0;">
+    <div style="display: inline-block; background-color: #f8f9fa; border: 2px solid #007bff; border-radius: 10px; padding: 20px; margin: 20px 0;">
+        <h1 style="color: #007bff; font-size: 32px; margin: 0; letter-spacing: 5px;">{{ otp_code }}</h1>
+    </div>
+</div>
+
+<div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+    <h3 style="margin-top: 0;">Important Information:</h3>
+    <ul style="color: #495057;">
+        <li>This code will expire in <strong>5 minutes</strong></li>
+        <li>Enter this code in the app to verify your email</li>
+        <li>Do not share this code with anyone</li>
+        <li>If you didn't request this verification, please ignore this email</li>
+    </ul>
+</div>
+
+<p style="text-align: center; margin: 30px 0;">
+    <a href="{{ site_url }}/verify-email?code={{ otp_code }}" class="button" style="background-color: #007bff;">Verify Email</a>
+</p>
+
+<p style="color: #6c757d; font-size: 14px; text-align: center;">
+    Having trouble? Contact our support team for assistance.
+</p>
+{% endblock %}

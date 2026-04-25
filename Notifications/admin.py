@@ -2,7 +2,8 @@ from django.contrib import admin
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from django.contrib.auth import get_user_model
-from .models import NotificationTemplate, Notification, Broadcast, NotificationType
+from .models import NotificationTemplate, Notification, Broadcast, NotificationType, FCMDevice
+from .push_service import send_push_to_user
 
 @admin.register(NotificationTemplate)
 class NotificationTemplateAdmin(admin.ModelAdmin):
@@ -66,8 +67,11 @@ class BroadcastAdmin(admin.ModelAdmin):
                     # Mock SMS
                     print(f"Mock Sending SMS to {user}: {broadcast.message}")
                 elif broadcast.type == NotificationType.PUSH:
-                    # Mock Push
-                    print(f"Mock Sending Push to {user}: {broadcast.message}")
+                    send_push_to_user(
+                        user,
+                        broadcast.subject or "Notification",
+                        broadcast.message,
+                    )
 
             broadcast.is_sent = True
             broadcast.sent_at = timezone.now()
@@ -77,3 +81,11 @@ class BroadcastAdmin(admin.ModelAdmin):
         self.message_user(request, _(f"{sent_count} broadcasts sent successfully."))
     
     send_broadcast.short_description = _("Send selected broadcasts now")
+
+
+@admin.register(FCMDevice)
+class FCMDeviceAdmin(admin.ModelAdmin):
+    list_display = ["user", "device_type", "device_name", "is_active", "created_at"]
+    list_filter = ["device_type", "is_active", "created_at"]
+    search_fields = ["user__email", "device_name", "registration_token"]
+    readonly_fields = ["created_at", "updated_at"]

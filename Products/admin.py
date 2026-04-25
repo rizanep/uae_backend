@@ -4,9 +4,9 @@ from .delivery_models import ProductDeliveryTier
 
 @admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
-    list_display = ["name", "slug", "parent", "created_at", "deleted_at"]
+    list_display = ["name", "name_arabic", "name_chinese", "slug", "parent", "created_at", "deleted_at"]
     prepopulated_fields = {"slug": ("name",)}
-    search_fields = ["name", "description"]
+    search_fields = ["name", "name_arabic", "name_chinese", "description"]
     list_filter = ["deleted_at", "created_at"]
 
 

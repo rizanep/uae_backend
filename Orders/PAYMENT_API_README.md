@@ -26,6 +26,58 @@ Retrieve detailed information for a specific payment.
 
 **Response Status:** `200 OK`
 
+### Create Refund
+```
+POST /api/orders/payments/{payment_id}/create_refund/
+```
+Create a refund for a successful payment. Only works for payments with SUCCESS status.
+
+**Request Body:**
+```json
+{
+  "amount_fils": 10000,
+  "currency_code": "AED"
+}
+```
+
+**Parameters:**
+- `amount_fils` (optional): Amount to refund in fils (100 fils = 1 AED). If not provided, full refund.
+- `currency_code` (optional): Currency code, defaults to "AED".
+
+**Response Status:** `201 Created`
+
+**Response:**
+```json
+{
+  "message": "Refund initiated successfully",
+  "refund_id": "refund_123",
+  "status": "pending",
+  "amount": 10000,
+  "currency": "AED"
+}
+```
+
+### Get Refund Status
+```
+GET /api/orders/payments/{payment_id}/refund_status/
+```
+Check the status of a refund for a payment.
+
+**Response Status:** `200 OK`
+
+**Response:**
+```json
+{
+  "refund_id": "refund_123",
+  "status": "completed",
+  "amount": 10000,
+  "currency": "AED",
+  "created_at": "2023-01-01T00:00:00Z",
+  "processed_at": "2023-01-01T00:01:00Z",
+  "reason": null
+}
+```
+
 ## Response Fields
 
 | Field | Type | Description |
@@ -159,10 +211,11 @@ curl -X GET "http://localhost:8000/api/orders/payments/42/" \
 | Code | Meaning |
 |------|---------|
 | `200` | Success |
-| `400` | Bad request (invalid parameters) |
+| `201` | Created (refund initiated) |
+| `400` | Bad request (invalid parameters, payment not refundable) |
 | `401` | Unauthorized (missing/invalid token) |
 | `403` | Forbidden (not admin) |
-| `404` | Payment not found |
+| `404` | Payment or refund not found |
 | `500` | Server error |
 
 ## Use Cases
@@ -185,12 +238,20 @@ GET /api/orders/payments/?search=customer_email@example.com
 ```
 Find all payments associated with a specific customer.
 
-### Payment Method Analytics
+### Process Customer Refunds
 ```bash
-GET /api/orders/payments/?payment_method=ZIINA
-GET /api/orders/payments/?payment_method=COD
+POST /api/orders/payments/42/create_refund/
+{
+  "amount_fils": 5000,
+  "currency_code": "AED"
+}
 ```
-Compare card vs. cash-on-delivery payment volumes.
+Initiate a partial refund of 50 AED for payment ID 42.
+
+```bash
+GET /api/orders/payments/42/refund_status/
+```
+Check the status of the refund for payment ID 42.
 
 ## Pagination
 Responses are paginated by default (typically 20 results per page).

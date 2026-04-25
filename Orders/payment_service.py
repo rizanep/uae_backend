@@ -22,7 +22,7 @@ class ZiinaPaymentService:
         }
 
     @staticmethod
-    def create_payment_intent(order, success_url=None, cancel_url=None, failure_url=None):
+    def create_payment_intent(order, use_app_urls=False, success_url=None, cancel_url=None, failure_url=None):
         """
         Create a Ziina payment intent for the given order.
         Amount is sent in fils (1 AED = 100 fils).
@@ -30,13 +30,22 @@ class ZiinaPaymentService:
         """
         amount_fils = int(order.total_amount * 100)
 
+        if use_app_urls:
+            success_url = success_url or settings.ZIINA_APP_SUCCESS_URL
+            cancel_url = cancel_url or settings.ZIINA_APP_CANCEL_URL
+            failure_url = failure_url or settings.ZIINA_APP_FAILURE_URL
+        else:
+            success_url = success_url or settings.ZIINA_SUCCESS_URL
+            cancel_url = cancel_url or settings.ZIINA_CANCEL_URL
+            failure_url = failure_url or settings.ZIINA_FAILURE_URL
+
         payload = {
             "amount": amount_fils,
             "currency_code": "AED",
             "message": f"Order #{order.id}",
-            "success_url": success_url or settings.ZIINA_SUCCESS_URL,
-            "cancel_url": cancel_url or settings.ZIINA_CANCEL_URL,
-            "failure_url": failure_url or settings.ZIINA_FAILURE_URL,
+            "success_url": success_url,
+            "cancel_url": cancel_url,
+            "failure_url": failure_url,
             "test": settings.ZIINA_TEST_MODE,
         }
 

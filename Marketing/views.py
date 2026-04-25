@@ -15,6 +15,43 @@ from .serializers import (
 )
 from .services import grant_referral_rewards
 from Users.models import User
+from Orders.models import DeliveryChargeConfig, DeliveryTimeSlot, DeliverySlotOverride
+from django.conf import settings
+import datetime
+import pytz
+
+# UAE timezone
+UAE_TZ = pytz.timezone('Asia/Dubai')
+
+PROMOTIONAL_LANGUAGES = ['en', 'ar', 'zh']
+
+PROMOTIONAL_TEMPLATES = {
+    'free_delivery': {
+        'en': 'Purchase for {amount} AED or above for free delivery',
+        'ar': 'اشتري بقيمة {amount} درهم أو أكثر للحصول على توصيل مجاني',
+        'zh': '购买满 {amount} AED 或以上可享免运费',
+    },
+    'free_delivery_all': {
+        'en': 'Free delivery on all orders',
+        'ar': 'التوصيل مجاني لجميع الطلبات',
+        'zh': '全场订单免运费',
+    },
+    'delivery_time': {
+        'en': 'Purchase before {cutoff} to get delivery between {start} - {end}',
+        'ar': 'اشترِ قبل {cutoff} للحصول على توصيل بين {start} - {end}',
+        'zh': '请在 {cutoff} 前下单，配送时间为 {start} - {end}',
+    },
+    'delivery_time_tomorrow': {
+        'en': 'Order now for delivery tomorrow between {start} - {end}',
+        'ar': 'اطلب الآن ليتم التوصيل غداً بين {start} - {end}',
+        'zh': '立即下单，明天 {start} - {end} 送达',
+    },
+    'delivery_time_fallback': {
+        'en': 'Fast delivery available - order now!',
+        'ar': 'التوصيل السريع متاح - اطلب الآن!',
+        'zh': '快速配送可用 - 立即下单!',
+    },
+}
 
 
 class IsAdminOrReadOnly(permissions.BasePermission):
@@ -171,6 +208,22 @@ class AdminCouponViewSet(viewsets.ModelViewSet):
         coupon.restore()
         return Response({"detail": "Coupon restored successfully."}, status=status.HTTP_200_OK)
 
+    @action(detail=True, methods=['post'])
+    def deactivate(self, request, pk=None):
+        """Deactivate a coupon."""
+        coupon = self.get_object()
+        coupon.is_active = False
+        coupon.save(update_fields=['is_active'])
+        return Response({"detail": "Coupon deactivated successfully.", "is_active": coupon.is_active}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def activate(self, request, pk=None):
+        """Activate a coupon."""
+        coupon = self.get_object()
+        coupon.is_active = True
+        coupon.save(update_fields=['is_active'])
+        return Response({"detail": "Coupon activated successfully.", "is_active": coupon.is_active}, status=status.HTTP_200_OK)
+
     @action(detail=False, methods=['get'])
     def stats(self, request):
         """Get coupon statistics and usage insights."""
@@ -206,11 +259,38 @@ class RewardConfigurationViewSet(viewsets.ModelViewSet):
     queryset = RewardConfiguration.objects.all()
     serializer_class = RewardConfigurationSerializer
 
+    def get_allowed_methods(self):
+        """
+        Return allowed methods. For singleton resources, allow PATCH on list endpoint.
+        """
+        if getattr(self, 'action', None) == 'list':
+            return ['GET', 'POST', 'PUT', 'PATCH', 'HEAD', 'OPTIONS']
+        return super().get_allowed_methods()
+
     def list(self, request):
-        """Get the current reward configuration."""
+        """Get or update the reward configuration."""
+        if request.method == 'PATCH':
+            return self.partial_update(request, pk=None)
+        
         config = RewardConfiguration.get_config()
         serializer = RewardConfigurationSerializer(config)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def create(self, request, *args, **kwargs):
+        """Create or update the singleton reward configuration."""
+        config = RewardConfiguration.get_config()
+        serializer = RewardConfigurationSerializer(config, data=request.data)
+        if serializer.is_valid():
+            serializer.validated_data['updated_by'] = request.user
+            serializer.save()
+            return Response(
+                {
+                    "detail": "Reward configuration saved successfully.",
+                    "config": serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def retrieve(self, request, pk=None):
         """Get specific reward configuration (always returns the singleton)."""
@@ -289,3 +369,107 @@ class RewardConfigurationViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK
         )
+
+
+class PromotionalContentViewSet(viewsets.ViewSet):
+    """
+    ViewSet for promotional content like delivery offers and time slots.
+    Provides dynamic promotional text based on current delivery settings and time.
+    """
+    permission_classes = [permissions.AllowAny]  # Public endpoint
+
+    @action(detail=False, methods=['get'])
+    def delivery_offers(self, request):
+        """
+        Returns promotional text for delivery offers.
+        Includes free delivery threshold and next available delivery time slot.
+        """
+        # Get delivery charge configuration
+        delivery_config = DeliveryChargeConfig.get_config()
+
+        # Get current time in UAE timezone
+        now_uae = timezone.now().astimezone(UAE_TZ)
+        current_time = now_uae.time()
+
+        # Get available delivery slots for today
+        today = now_uae.date()
+        all_active_slots = DeliveryTimeSlot.objects.filter(is_active=True).order_by('sort_order', 'start_time')
+
+        # Get overrides for today
+        overrides = {
+            o.slot_id: o.is_active
+            for o in DeliverySlotOverride.objects.filter(date=today)
+        }
+
+        # Find the next available slot
+        next_slot = None
+        for slot in all_active_slots:
+            # Check per-date override
+            if slot.id in overrides:
+                if not overrides[slot.id]:
+                    continue  # override says inactive
+
+            # Check cutoff time for today
+            if current_time < slot.cutoff_time:
+                next_slot = slot
+                break
+
+        # Build promotional texts for all supported languages
+        promotional_texts = {lang: {} for lang in PROMOTIONAL_LANGUAGES}
+
+        for lang in PROMOTIONAL_LANGUAGES:
+            if delivery_config.is_active and delivery_config.min_free_shipping_amount > 0:
+                promotional_texts[lang]["free_delivery"] = PROMOTIONAL_TEMPLATES["free_delivery"][lang].format(
+                    amount=delivery_config.min_free_shipping_amount
+                )
+            else:
+                promotional_texts[lang]["free_delivery"] = PROMOTIONAL_TEMPLATES["free_delivery_all"][lang]
+
+        # Delivery time text (only one based on current time)
+        if next_slot:
+            start_time_12hr = next_slot.start_time.strftime('%I:%M %p').lstrip('0')
+            end_time_12hr = next_slot.end_time.strftime('%I:%M %p').lstrip('0')
+            cutoff_time_12hr = next_slot.cutoff_time.strftime('%I:%M %p').lstrip('0')
+
+            for lang in PROMOTIONAL_LANGUAGES:
+                promotional_texts[lang]["delivery_time"] = PROMOTIONAL_TEMPLATES["delivery_time"][lang].format(
+                    cutoff=cutoff_time_12hr,
+                    start=start_time_12hr,
+                    end=end_time_12hr,
+                )
+        else:
+            # If no slots available today, show tomorrow's first slot
+            tomorrow = today + datetime.timedelta(days=1)
+            tomorrow_slots = DeliveryTimeSlot.objects.filter(is_active=True).order_by('sort_order', 'start_time')
+
+            # Get overrides for tomorrow
+            tomorrow_overrides = {
+                o.slot_id: o.is_active
+                for o in DeliverySlotOverride.objects.filter(date=tomorrow)
+            }
+
+            tomorrow_slot = None
+            for slot in tomorrow_slots:
+                if slot.id in tomorrow_overrides:
+                    if not tomorrow_overrides[slot.id]:
+                        continue
+                tomorrow_slot = slot
+                break
+
+            if tomorrow_slot:
+                start_time_12hr = tomorrow_slot.start_time.strftime('%I:%M %p').lstrip('0')
+                end_time_12hr = tomorrow_slot.end_time.strftime('%I:%M %p').lstrip('0')
+                for lang in PROMOTIONAL_LANGUAGES:
+                    promotional_texts[lang]["delivery_time"] = PROMOTIONAL_TEMPLATES["delivery_time_tomorrow"][lang].format(
+                        start=start_time_12hr,
+                        end=end_time_12hr,
+                    )
+            else:
+                for lang in PROMOTIONAL_LANGUAGES:
+                    promotional_texts[lang]["delivery_time"] = PROMOTIONAL_TEMPLATES["delivery_time_fallback"][lang]
+
+        return Response({
+            "promotional_texts": promotional_texts,
+            "timestamp": now_uae.isoformat(),
+            "timezone": "Asia/Dubai"
+        }, status=status.HTTP_200_OK)

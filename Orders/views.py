@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action, throttle_classes, api_view, permission_classes
 from rest_framework.response import Response
+from rest_framework.filters import SearchFilter, OrderingFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db import transaction
 from django.db.models import Count, Sum, Avg, F, Q
@@ -17,6 +18,8 @@ import logging
 import hmac
 import hashlib
 import json
+import datetime
+import pytz
 
 from .models import (
     Order,
@@ -27,8 +30,16 @@ from .models import (
     DeliveryAssignment,
     DeliveryProof,
     DeliveryCancellationRequest,
+    DeliveryTimeSlot,
+    DeliverySlotOverride,
 )
-from .serializers import OrderSerializer, AdminPaymentSerializer
+from .serializers import (
+    OrderSerializer,
+    AdminPaymentSerializer,
+    DeliveryTimeSlotSerializer,
+    AdminDeliveryTimeSlotSerializer,
+    DeliverySlotOverrideSerializer,
+)
 from Cart.models import Cart, CartItem
 from Users.models import UserAddress, User
 from Reviews.models import Review
@@ -37,6 +48,8 @@ from .receipt_templates import render_receipt_image, render_receipt_pdf, render_
 from .utils import calculate_delivery_estimate, get_earliest_delivery_date
 from .coupon_service import validate_and_calculate_coupon, apply_coupon_to_order, get_delivery_charge
 from core.throttling import UserOrderThrottle, UserPaymentThrottle, AnonGeneralThrottle
+
+UAE_TZ = pytz.timezone('Asia/Dubai')
 
 logger = logging.getLogger(__name__)
 webhook_logger = logging.getLogger('Orders.webhook')
@@ -49,7 +62,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     """
     serializer_class = OrderSerializer
     permission_classes = [permissions.IsAuthenticated]
-    filter_backends = [DjangoFilterBackend]
+    filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = [
         "id",
         "user",
@@ -64,6 +77,14 @@ class OrderViewSet(viewsets.ModelViewSet):
         "payment__status",  # Payment status
         "payment__payment_method",
         "payment__amount",
+    ]
+    search_fields = [
+        'id',
+        'user__email',
+        'user__phone_number',
+        'user__first_name',
+        'user__last_name',
+        'shipping_address__emirate',
     ]
 
     def get_queryset(self):
@@ -484,6 +505,23 @@ class OrderViewSet(viewsets.ModelViewSet):
         except Cart.DoesNotExist:
             return Response({"error": "Cart not found."}, status=status.HTTP_400_BAD_REQUEST)
         
+        # Validate stock availability
+        stock_errors = []
+        for cart_item in cart_items:
+            if cart_item.product.stock < cart_item.quantity:
+                stock_errors.append({
+                    "product_id": cart_item.product.id,
+                    "product_name": cart_item.product.name,
+                    "requested_quantity": cart_item.quantity,
+                    "available_stock": cart_item.product.stock
+                })
+        
+        if stock_errors:
+            return Response({
+                "error": "Insufficient stock for one or more products.",
+                "stock_details": stock_errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
         # Calculate cart total
         cart_total_before = sum(cart_item.subtotal for cart_item in cart_items)
         discount_amount = Decimal('0.00')
@@ -542,14 +580,26 @@ class OrderViewSet(viewsets.ModelViewSet):
         
         address_id = request.data.get("address_id")
         delivery_date = request.data.get("preferred_delivery_date")
-        delivery_slot = request.data.get("preferred_delivery_slot")
+        delivery_slot_id = request.data.get("preferred_delivery_slot")
         delivery_notes = request.data.get("delivery_notes")
         payment_method = request.data.get("payment_method", "ZIINA")
+        device = request.data.get("device")
         tip_amount = Decimal(str(request.data.get("tip_amount", 0)))
         coupon_code = request.data.get("coupon_code", "").upper().strip()
         
         if tip_amount < 0:
             return Response({"error": "Tip amount cannot be negative."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # 0.5. Resolve delivery slot FK
+        delivery_slot = None
+        if delivery_slot_id:
+            try:
+                delivery_slot = DeliveryTimeSlot.objects.get(id=delivery_slot_id, is_active=True)
+            except DeliveryTimeSlot.DoesNotExist:
+                return Response(
+                    {"error": "Invalid or inactive delivery time slot."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         
         # 1. Validate Address
         address = get_object_or_404(UserAddress, id=address_id, user=user)
@@ -585,12 +635,21 @@ class OrderViewSet(viewsets.ModelViewSet):
                 return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
 
         # 3. Validate Stock for all items
+        stock_errors = []
         for cart_item in cart_items:
             if cart_item.product.stock < cart_item.quantity:
-                return Response(
-                    {"error": f"Insufficient stock for {cart_item.product.name}."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                stock_errors.append({
+                    "product_id": cart_item.product.id,
+                    "product_name": cart_item.product.name,
+                    "requested_quantity": cart_item.quantity,
+                    "available_stock": cart_item.product.stock
+                })
+        
+        if stock_errors:
+            return Response({
+                "error": "Insufficient stock for one or more products.",
+                "stock_details": stock_errors
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         # 4. Create Order
         cart_total = sum(cart_item.subtotal for cart_item in cart_items)
@@ -676,8 +735,9 @@ class OrderViewSet(viewsets.ModelViewSet):
         
         else:
             # Create Ziina Payment Intent
+            use_app_urls = bool(device and str(device).strip().lower() in ("mobile", "android", "ios"))
             try:
-                payment_data = ZiinaPaymentService.create_payment_intent(order)
+                payment_data = ZiinaPaymentService.create_payment_intent(order, use_app_urls=use_app_urls)
             except Exception as e:
                 logger.error(f"Ziina payment intent creation failed for Order #{order.id}: {e}")
                 return Response(
@@ -1106,6 +1166,23 @@ class OrderViewSet(viewsets.ModelViewSet):
         except Cart.DoesNotExist:
             return Response({"error": "Cart not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        # Validate stock availability
+        stock_errors = []
+        for cart_item in cart_items:
+            if cart_item.product.stock < cart_item.quantity:
+                stock_errors.append({
+                    "product_id": cart_item.product.id,
+                    "product_name": cart_item.product.name,
+                    "requested_quantity": cart_item.quantity,
+                    "available_stock": cart_item.product.stock
+                })
+        
+        if stock_errors:
+            return Response({
+                "error": "Insufficient stock for one or more products.",
+                "stock_details": stock_errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         max_days, details = calculate_delivery_estimate(cart_items)
         estimated_date = timezone.now().date() + timedelta(days=max_days)
         
@@ -1115,13 +1192,13 @@ class OrderViewSet(viewsets.ModelViewSet):
             "details": details
         })
 
-    @action(detail=False, methods=["get", "post"], permission_classes=[permissions.IsAdminUser])
+    @action(detail=False, methods=["get", "post"])
     def delivery_charge_settings(self, request):
         """
-        Admin endpoint to view and configure delivery charge settings.
+        Endpoint to view delivery charge settings.
         
-        GET: Retrieve current delivery charge configuration
-        POST: Update delivery charge configuration
+        GET: Retrieve current delivery charge configuration (authenticated users)
+        POST: Update delivery charge configuration (admin only)
         
         Request body (POST):
         {
@@ -1138,6 +1215,12 @@ class OrderViewSet(viewsets.ModelViewSet):
             "message": "Configuration retrieved/updated successfully"
         }
         """
+        if request.method == "POST" and not request.user.is_staff:
+            return Response(
+                {"error": "Admin privileges required to update delivery charge settings."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
         config = DeliveryChargeConfig.get_config()
         
         if request.method == "GET":
@@ -1225,6 +1308,92 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
             'order',
             'order__user'
         ).order_by('-created_at')
+
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, permissions.IsAdminUser])
+    def create_refund(self, request, pk=None):
+        """
+        Create a refund for a payment. Admin-only endpoint.
+        POST /api/orders/payments/{id}/create_refund/
+        Body: {"amount_fils": 1000, "currency_code": "AED"} (optional amount_fils for partial refund)
+        """
+        payment = self.get_object()
+
+        # Validate payment exists and is successful
+        if payment.status.lower() not in ['success', 'paid']:
+            return Response(
+                {"error": "Can only refund successful payments"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check if payment already has a refund
+        if hasattr(payment, 'refund_id') and payment.refund_id:
+            return Response(
+                {"error": "Payment already has a refund"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        amount_fils = request.data.get('amount_fils')
+        currency_code = request.data.get('currency_code', 'AED')
+
+        try:
+            # Create refund via Ziina
+            refund_data = ZiinaPaymentService.create_refund(
+                payment_intent_id=payment.transaction_id,
+                amount_fils=amount_fils,
+                currency_code=currency_code
+            )
+
+            # Store refund ID in payment record
+            payment.refund_id = refund_data.get('id')
+            payment.save(update_fields=['refund_id'])
+
+            return Response({
+                "message": "Refund initiated successfully",
+                "refund_id": refund_data.get('id'),
+                "status": refund_data.get('status'),
+                "amount": refund_data.get('amount'),
+                "currency": refund_data.get('currency_code')
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to create refund: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['get'], permission_classes=[permissions.IsAuthenticated, permissions.IsAdminUser])
+    def refund_status(self, request, pk=None):
+        """
+        Get the status of a refund for a payment. Admin-only endpoint.
+        GET /api/orders/payments/{id}/refund_status/
+        """
+        payment = self.get_object()
+
+        if not hasattr(payment, 'refund_id') or not payment.refund_id:
+            return Response(
+                {"error": "No refund found for this payment"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            # Get refund status from Ziina
+            refund_data = ZiinaPaymentService.get_refund(payment.refund_id)
+
+            return Response({
+                "refund_id": payment.refund_id,
+                "status": refund_data.get('status'),
+                "amount": refund_data.get('amount'),
+                "currency": refund_data.get('currency_code'),
+                "created_at": refund_data.get('created_at'),
+                "processed_at": refund_data.get('processed_at'),
+                "reason": refund_data.get('reason')
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to get refund status: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 # ============================================================================
@@ -1400,3 +1569,115 @@ def ziina_webhook(request):
             "success": False,
             "error": "Internal server error"
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class DeliveryTimeSlotViewSet(viewsets.ModelViewSet):
+    """
+    Admin-only ViewSet for managing delivery timeslots.
+    Regular users get a read-only view of available slots via the
+    `available` action: GET /api/orders/delivery-slots/available/?date=YYYY-MM-DD
+    """
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['is_active']
+    search_fields = ['name']
+    ordering_fields = ['sort_order', 'start_time', 'created_at']
+    ordering = ['sort_order', 'start_time']
+
+    def get_queryset(self):
+        return DeliveryTimeSlot.objects.all()
+
+    def get_serializer_class(self):
+        if self.request.user.is_staff:
+            return AdminDeliveryTimeSlotSerializer
+        return DeliveryTimeSlotSerializer
+
+    def get_permissions(self):
+        if self.action in ['available']:
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated(), permissions.IsAdminUser()]
+
+    @action(detail=True, methods=['post'])
+    def activate(self, request, pk=None):
+        """Activate a timeslot globally."""
+        slot = self.get_object()
+        slot.is_active = True
+        slot.save(update_fields=['is_active'])
+        return Response({"detail": "Timeslot activated.", "is_active": True}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def deactivate(self, request, pk=None):
+        """Deactivate a timeslot globally."""
+        slot = self.get_object()
+        slot.is_active = False
+        slot.save(update_fields=['is_active'])
+        return Response({"detail": "Timeslot deactivated.", "is_active": False}, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def available(self, request):
+        """
+        Returns available delivery timeslots for a given date.
+        Filters by: global active, per-date override, cutoff time (for today).
+
+        Query param:
+          - date (optional, YYYY-MM-DD) -- defaults to today (UAE timezone)
+        """
+        now_uae = timezone.now().astimezone(UAE_TZ)
+
+        date_param = request.query_params.get('date')
+        if date_param:
+            try:
+                target_date = datetime.date.fromisoformat(date_param)
+            except ValueError:
+                return Response(
+                    {"detail": "Invalid date format. Use YYYY-MM-DD."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        else:
+            target_date = now_uae.date()
+
+        # Reject past dates
+        if target_date < now_uae.date():
+            return Response({"detail": "Cannot select a past date.", "available_slots": []}, status=status.HTTP_400_BAD_REQUEST)
+
+        all_active_slots = DeliveryTimeSlot.objects.filter(is_active=True).order_by('sort_order', 'start_time')
+
+        # Fetch all overrides for this date in one query
+        overrides = {
+            o.slot_id: o.is_active
+            for o in DeliverySlotOverride.objects.filter(date=target_date)
+        }
+
+        available = []
+        for slot in all_active_slots:
+            # Per-date override takes priority
+            if slot.id in overrides:
+                if not overrides[slot.id]:
+                    continue  # override says inactive for this date
+            # For today: check cutoff time
+            if target_date == now_uae.date():
+                if now_uae.time() >= slot.cutoff_time:
+                    continue  # cutoff passed, skip
+            available.append(slot)
+
+        serializer = DeliveryTimeSlotSerializer(available, many=True)
+        return Response({
+            "date": target_date.isoformat(),
+            "available_slots": serializer.data,
+        }, status=status.HTTP_200_OK)
+
+
+class DeliverySlotOverrideViewSet(viewsets.ModelViewSet):
+    """
+    Admin-only ViewSet for per-date slot availability overrides.
+    Use this to disable/enable a specific slot on a specific date
+    (e.g. disable 8-9 AM on a holiday or when no drivers are available).
+    """
+    serializer_class = DeliverySlotOverrideSerializer
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    filterset_fields = ['slot', 'date', 'is_active']
+    ordering_fields = ['date', 'slot__sort_order']
+    ordering = ['date', 'slot__sort_order']
+
+    def get_queryset(self):
+        return DeliverySlotOverride.objects.select_related('slot').all()

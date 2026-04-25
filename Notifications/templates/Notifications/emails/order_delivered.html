@@ -1,0 +1,78 @@
+{% extends "Notifications/emails/base.html" %}
+
+{% block title %}Order Delivered - Simak Fresh{% endblock %}
+
+{% block page_title %}Your Order Has Been Delivered!{% endblock %}
+
+{% block content %}
+<div class="highlight">
+    <h2>🚚 Order Delivered Successfully</h2>
+    <p>Dear {{ order.user.first_name|default:order.user.email }},</p>
+    <p>Great news! Your order has been successfully delivered to your doorstep.</p>
+</div>
+
+<div style="background-color: #d4edda; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #28a745;">
+    <h3 style="margin-top: 0; color: #155724;">Delivery Confirmation:</h3>
+    <table style="width: 100%; border-collapse: collapse;">
+        <tr>
+            <td style="padding: 8px 0;"><strong>Order ID:</strong></td>
+            <td style="padding: 8px 0;">{{ order.id }}</td>
+        </tr>
+        <tr>
+            <td style="padding: 8px 0;"><strong>Delivered On:</strong></td>
+            <td style="padding: 8px 0;">{{ order.delivered_at|default:order.updated_at|date:"M d, Y \a\t h:i A" }}</td>
+        </tr>
+        <tr>
+            <td style="padding: 8px 0;"><strong>Total Amount:</strong></td>
+            <td style="padding: 8px 0; color: #155724; font-weight: bold;">AED {{ order.total_amount }}</td>
+        </tr>
+    </table>
+</div>
+
+<div style="margin: 20px 0;">
+    <h3>What Was Delivered:</h3>
+    <div style="border: 1px solid #dee2e6; border-radius: 5px; overflow: hidden;">
+        {% for item in order.items.all %}
+        <div style="padding: 15px; border-bottom: 1px solid #dee2e6; {% if forloop.last %}border-bottom: none;{% endif %}">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <strong>{{ item.product_name }}</strong>
+                    <br>
+                    <span style="color: #6c757d; font-size: 14px;">Quantity: {{ item.quantity }}</span>
+                </div>
+                <div style="text-align: right;">
+                    <span style="color: #28a745;">✓ Delivered</span>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+    <h4 style="margin-top: 0;">How was your experience?</h4>
+    <p>We hope you enjoyed your fresh products from Simak Fresh! Your feedback helps us improve our service.</p>
+
+    <div style="text-align: center; margin: 20px 0;">
+        <a href="{{ site_url }}/feedback?order={{ order.id }}" class="button" style="background-color: #ffc107; color: #212529;">Leave Feedback</a>
+    </div>
+</div>
+
+<div style="text-align: center; margin: 30px 0;">
+    <a href="{{ site_url }}/orders/{{ order.id }}" class="button">View Order Details</a>
+</div>
+
+<div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">
+    <h4 style="margin-top: 0; color: #856404;">Important Notes:</h4>
+    <ul style="color: #856404; margin: 10px 0;">
+        <li>Please check your order upon delivery</li>
+        <li>Fresh products should be refrigerated immediately</li>
+        <li>Contact us within 24 hours if you have any issues</li>
+        <li>Keep this email for your records</li>
+    </ul>
+</div>
+
+<p style="color: #6c757d; font-size: 14px;">
+    Thank you for choosing Simak Fresh! We look forward to serving you again soon.
+</p>
+{% endblock %}

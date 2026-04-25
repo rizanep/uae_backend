@@ -6,6 +6,7 @@ from rest_framework import status
 from decimal import Decimal
 from datetime import timedelta
 from django.contrib.auth import get_user_model
+from unittest.mock import patch
 from .models import Order, OrderItem, Payment
 from Cart.models import Cart, CartItem
 from Products.models import Product, Category
@@ -13,6 +14,71 @@ from Reviews.models import Review
 from Users.models import UserAddress
 
 User = get_user_model()
+
+
+class OrderSignalNotificationTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email='signaluser@example.com',
+            password='pass12345',
+            phone_number='+971500000010',
+        )
+        self.address = UserAddress.objects.create(
+            user=self.user,
+            label='Home',
+            address_type='home',
+            full_name='Signal User',
+            phone_number='+971500000010',
+            street_address='Street 1',
+            city='Dubai',
+            emirate='dubai',
+        )
+
+    @patch('Orders.signals.send_order_status_multichannel_notification.delay')
+    def test_order_created_triggers_multichannel_dispatch(self, mock_delay):
+        order = Order.objects.create(
+            user=self.user,
+            shipping_address=self.address,
+            total_amount=Decimal('120.00'),
+            status=Order.OrderStatus.PENDING,
+        )
+
+        mock_delay.assert_called_once_with(order.id)
+
+    @patch('Orders.signals.send_order_status_multichannel_notification.delay')
+    def test_order_status_change_triggers_multichannel_dispatch(self, mock_delay):
+        order = Order.objects.create(
+            user=self.user,
+            shipping_address=self.address,
+            total_amount=Decimal('120.00'),
+            status=Order.OrderStatus.PENDING,
+        )
+        mock_delay.reset_mock()
+
+        order.status = Order.OrderStatus.PAID
+        order.save()
+
+        mock_delay.assert_called_once_with(order.id)
+
+    @patch('Orders.signals.send_payment_receipt_multichannel_notification.delay')
+    @patch('Orders.signals.send_order_status_multichannel_notification.delay')
+    def test_payment_success_triggers_receipt_dispatch(self, mock_status_delay, mock_receipt_delay):
+        order = Order.objects.create(
+            user=self.user,
+            shipping_address=self.address,
+            total_amount=Decimal('75.00'),
+            status=Order.OrderStatus.PENDING,
+        )
+        mock_status_delay.reset_mock()
+
+        payment = Payment.objects.create(
+            order=order,
+            amount=Decimal('75.00'),
+            status=Payment.PaymentStatus.SUCCESS,
+            payment_method=Payment.PaymentMethod.ZIINA,
+        )
+
+        mock_receipt_delay.assert_called_once_with(payment.id)
 
 
 class DashboardAnalyticsTestCase(APITestCase):
@@ -326,3 +392,191 @@ class DashboardAnalyticsTestCase(APITestCase):
         rating_counts = {item['rating']: item['count'] for item in reviews_data['by_rating']}
         self.assertEqual(rating_counts[5], 1)
         self.assertEqual(rating_counts[4], 1)
+
+
+class PaymentRefundTestCase(APITestCase):
+    """Test cases for payment refund endpoints."""
+
+    def setUp(self):
+        """Set up test data."""
+        # Create admin user
+        self.admin_user = User.objects.create_user(
+            email="admin@example.com",
+            password="adminpass123",
+            role="admin",
+            is_staff=True,
+            is_superuser=True
+        )
+
+        # Create regular user
+        self.regular_user = User.objects.create_user(
+            email="user@example.com",
+            password="userpass123",
+            role="user"
+        )
+
+        # Create category and product
+        self.category = Category.objects.create(name="Test Category", slug="test-category")
+        self.product = Product.objects.create(
+            name="Test Product",
+            description="Test description",
+            price=Decimal("100.00"),
+            stock=10,
+            category=self.category,
+            is_active=True
+        )
+
+        # Create user address
+        self.address = UserAddress.objects.create(
+            user=self.regular_user,
+            name="Test Address",
+            phone="1234567890",
+            address_line_1="123 Test St",
+            city="Test City",
+            state="Test State",
+            postal_code="12345",
+            country="Test Country"
+        )
+
+        # Create order
+        self.order = Order.objects.create(
+            user=self.regular_user,
+            shipping_address=self.address,
+            total_amount=Decimal("100.00"),
+            status=Order.OrderStatus.PAID
+        )
+
+        # Create order item
+        OrderItem.objects.create(
+            order=self.order,
+            product=self.product,
+            product_name=self.product.name,
+            quantity=1,
+            price=self.product.price
+        )
+
+        # Create successful payment
+        self.payment = Payment.objects.create(
+            order=self.order,
+            transaction_id="test_transaction_123",
+            amount=self.order.total_amount,
+            status=Payment.PaymentStatus.SUCCESS,
+            payment_method=Payment.PaymentMethod.ZIINA
+        )
+
+        # Create failed payment
+        self.failed_payment = Payment.objects.create(
+            order=self.order,
+            transaction_id="test_transaction_failed",
+            amount=self.order.total_amount,
+            status=Payment.PaymentStatus.FAILED,
+            payment_method=Payment.PaymentMethod.ZIINA
+        )
+
+    def test_create_refund_admin_access(self):
+        """Test that admin users can create refunds."""
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payment-create-refund', kwargs={'pk': self.payment.pk})
+        data = {"amount_fils": 10000, "currency_code": "AED"}  # 100 AED in fils
+
+        # Mock the ZiinaPaymentService.create_refund method
+        from unittest.mock import patch
+        with patch('Orders.payment_service.ZiinaPaymentService.create_refund') as mock_refund:
+            mock_refund.return_value = {
+                "id": "refund_123",
+                "status": "pending",
+                "amount": 10000,
+                "currency_code": "AED"
+            }
+
+            response = self.client.post(url, data, format='json')
+
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+            self.assertIn('refund_id', response.data)
+            self.assertEqual(response.data['refund_id'], 'refund_123')
+
+            # Check that refund_id was saved to payment
+            self.payment.refresh_from_db()
+            self.assertEqual(self.payment.refund_id, 'refund_123')
+
+    def test_create_refund_regular_user_denied(self):
+        """Test that regular users cannot create refunds."""
+        self.client.force_authenticate(user=self.regular_user)
+        url = reverse('payment-create-refund', kwargs={'pk': self.payment.pk})
+        data = {"amount_fils": 10000}
+
+        response = self.client.post(url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_create_refund_failed_payment_denied(self):
+        """Test that refunds cannot be created for failed payments."""
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payment-create-refund', kwargs={'pk': self.failed_payment.pk})
+        data = {"amount_fils": 10000}
+
+        response = self.client.post(url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('error', response.data)
+
+    def test_create_refund_duplicate_denied(self):
+        """Test that duplicate refunds are not allowed."""
+        # Set refund_id on payment
+        self.payment.refund_id = "existing_refund_123"
+        self.payment.save()
+
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payment-create-refund', kwargs={'pk': self.payment.pk})
+        data = {"amount_fils": 10000}
+
+        response = self.client.post(url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('error', response.data)
+
+    def test_refund_status_admin_access(self):
+        """Test that admin users can check refund status."""
+        # Set refund_id on payment
+        self.payment.refund_id = "refund_123"
+        self.payment.save()
+
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payment-refund-status', kwargs={'pk': self.payment.pk})
+
+        # Mock the ZiinaPaymentService.get_refund method
+        from unittest.mock import patch
+        with patch('Orders.payment_service.ZiinaPaymentService.get_refund') as mock_get_refund:
+            mock_get_refund.return_value = {
+                "id": "refund_123",
+                "status": "completed",
+                "amount": 10000,
+                "currency_code": "AED",
+                "created_at": "2023-01-01T00:00:00Z",
+                "processed_at": "2023-01-01T00:01:00Z"
+            }
+
+            response = self.client.get(url)
+
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertIn('refund_id', response.data)
+            self.assertEqual(response.data['status'], 'completed')
+
+    def test_refund_status_no_refund(self):
+        """Test refund status when no refund exists."""
+        self.client.force_authenticate(user=self.admin_user)
+        url = reverse('payment-refund-status', kwargs={'pk': self.payment.pk})
+
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn('error', response.data)
+
+    def test_refund_status_regular_user_denied(self):
+        """Test that regular users cannot check refund status."""
+        self.client.force_authenticate(user=self.regular_user)
+        url = reverse('payment-refund-status', kwargs={'pk': self.payment.pk})
+
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

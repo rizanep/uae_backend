@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Notification, NotificationTemplate, Broadcast, NotificationType, ContactMessage
+from .models import Notification, NotificationTemplate, Broadcast, NotificationType, ContactMessage, FCMDevice
 
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
@@ -46,4 +46,11 @@ class ContactMessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ContactMessage
         fields = ["id", "name", "email", "subject", "message", "is_resolved", "created_at"]
-        read_only_fields = ["name", "email", "is_resolved", "created_at"]
+        read_only_fields = ["name", "email", "created_at"]
+
+
+class FCMDeviceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FCMDevice
+        fields = ["id", "registration_token", "device_type", "device_name", "is_active", "created_at"]
+        read_only_fields = ["id", "created_at"]

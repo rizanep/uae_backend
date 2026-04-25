@@ -3,6 +3,7 @@ from rest_framework.decorators import action, throttle_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
+from rest_framework.filters import SearchFilter
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -35,6 +36,9 @@ from core.throttling import (
     UserGeneralThrottle, AnonGeneralThrottle
 )
 
+# Module-level logger
+logger = logging.getLogger(__name__)
+
 # Cookie settings
 COOKIE_ACCESS_NAME = 'access_token'
 COOKIE_REFRESH_NAME = 'refresh_token'
@@ -53,8 +57,9 @@ class UserViewSet(viewsets.ModelViewSet):
     serializer_class = UserSerializer
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [JSONParser, MultiPartParser, FormParser]
-    filter_backends = [DjangoFilterBackend]
+    filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = "__all__"
+    search_fields = ['email', 'phone_number', 'first_name', 'last_name']
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action and user role"""
@@ -216,6 +221,8 @@ class UserViewSet(viewsets.ModelViewSet):
         if role:
             queryset = queryset.filter(role=role)
 
+        queryset = self.filter_queryset(queryset)
+
         serializer_class = UserAdminSerializer
         if role == 'delivery_boy':
             serializer_class = UserSerializer
@@ -238,6 +245,7 @@ class UserViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(deleted_at__isnull=True)
 
         queryset = queryset.select_related('profile', 'delivery_profile').prefetch_related('addresses', 'orders')
+        queryset = self.filter_queryset(queryset)
         serializer = UserSerializer(queryset, many=True)
         return Response(serializer.data)
 
@@ -355,6 +363,73 @@ class UserViewSet(viewsets.ModelViewSet):
             UserSerializer(user).data,
             status=status.HTTP_201_CREATED
         )
+
+    @action(detail=False, methods=['post'])
+    def request_account_deletion(self, request):
+        """
+        Request account deletion with password confirmation
+        
+        This endpoint allows users to delete their own account along with all related data.
+        Requires password confirmation and explicit deletion confirmation.
+        
+        Request body:
+        {
+            "password": "user_password",
+            "delete_method": "soft",  // or "hard"
+            "confirm_deletion": true
+        }
+        
+        delete_method options:
+        - "soft": Anonymize the account (keep data structure intact)
+        - "hard": Permanently delete all data (harder to recover)
+        
+        Response includes:
+        - Status of deletion
+        - Timestamp
+        - What was deleted
+        """
+        from .serializers import AccountDeletionRequestSerializer, AccountDeletionResponseSerializer
+        from .account_deletion_service import AccountDeletionService
+        
+        serializer = AccountDeletionRequestSerializer(
+            data=request.data,
+            context={'request': request}
+        )
+        serializer.is_valid(raise_exception=True)
+        
+        try:
+            result = AccountDeletionService.delete_user_data(
+                user=request.user,
+                delete_method=serializer.validated_data['delete_method'],
+                send_confirmation=True
+            )
+            
+            response_serializer = AccountDeletionResponseSerializer(result)
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
+        
+        except Exception as e:
+            logger.error(f"Account deletion failed: {str(e)}", exc_info=True)
+            return Response(
+                {'detail': 'Account deletion failed. Please try again later.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def account_deletion_info(self, request):
+        """
+        Get information about what will be deleted when account is deleted
+        
+        Shows:
+        - User information
+        - Number of related items (orders, addresses, etc.)
+        - Warning about irreversibility
+        """
+        from .serializers import AccountDeletionInfoSerializer
+        from .account_deletion_service import AccountDeletionService
+        
+        info = AccountDeletionService.get_deletion_info(request.user)
+        serializer = AccountDeletionInfoSerializer(info)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class LoginView(TokenObtainPairView):
@@ -776,6 +851,7 @@ class OTPRequestView(APIView):
     def post(self, request):
         serializer = OTPRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        otp_platform = serializer.validated_data.get('otp_platform', 'sms')
         otp = serializer.save()
         
         if not otp.user.is_active:
@@ -795,22 +871,15 @@ class OTPRequestView(APIView):
         print(f"Expires at: {otp.expires_at}")
         print("=" * 50)
 
-        # Send OTP via Celery task if flag is enabled and it's a phone number
-        if otp.otp_type == 'phone' and otp.phone_number and getattr(settings, "USE_REAL_TWILIO_OTP", False):
-            from .tasks import send_otp_via_twilio
-            send_otp_via_twilio.delay(otp.phone_number, otp.otp_code)
-        if otp.otp_type == 'email' and otp.email:
-            from .tasks import send_email_task
-            send_email_task.delay(
-                subject="Your verification code",
-                message=f"Your verification code is: {otp.otp_code}",
-                recipient_list=[otp.email],
-            )
+        # Route OTP through centralized async notification task.
+        from Notifications.tasks import send_login_otp_notification
+        send_login_otp_notification.delay(otp.id, otp_platform)
 
         return Response(
             {
                 'detail': f'OTP sent to {otp.otp_type}',
                 'otp_type': otp.otp_type,
+                'otp_platform': otp_platform if otp.otp_type == 'phone' else 'email',
                 'contact': otp.phone_number or otp.email,
                 'expires_in_minutes': 5
             },
