@@ -2,6 +2,10 @@ from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 from .models import Order, OrderStatusHistory, Payment, Receipt
 from Notifications.models import Notification
+from Notifications.tasks import (
+    send_order_status_multichannel_notification,
+    send_payment_receipt_multichannel_notification,
+)
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -72,6 +76,9 @@ def send_order_status_notification(sender, instance, created, **kwargs):
         if admin_notifications:
             Notification.objects.bulk_create(admin_notifications)
 
+        # New orders start as pending and should prompt payment immediately.
+        send_order_status_multichannel_notification.delay(instance.id)
+
     else:
         old_status = getattr(instance, '_old_status', None)
         if old_status and old_status != instance.status:
@@ -81,6 +88,8 @@ def send_order_status_notification(sender, instance, created, **kwargs):
                 message=f"Your order #{instance.id} status has been updated to {instance.get_status_display()}.",
                 action_url=f"/orders/{instance.id}"
             )
+
+            send_order_status_multichannel_notification.delay(instance.id)
 
 @receiver(post_save, sender=Payment)
 def handle_payment_success(sender, instance, **kwargs):
@@ -97,8 +106,14 @@ def handle_payment_success(sender, instance, **kwargs):
             order.save()
         
         # 2. Create Receipt if it doesn't exist
+        created_receipt = False
         if not hasattr(instance, "receipt"):
             Receipt.objects.create(
                 payment=instance,
                 receipt_number=Receipt.generate_number()
             )
+            created_receipt = True
+
+        # Notify payment receipt after ensuring receipt exists.
+        if created_receipt or hasattr(instance, "receipt"):
+            send_payment_receipt_multichannel_notification.delay(instance.id)

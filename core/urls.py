@@ -29,6 +29,8 @@ urlpatterns = [
     path('api/reviews/', include('Reviews.urls')),
     path('api/notifications/', include('Notifications.urls')),
     path('api/marketing/', include('Marketing.urls')),
+    path('api/whatsapp/', include('WhatsApp.urls')),
+    path('api/sms/', include('SMS.urls')),
     
     # Rate limiting monitoring endpoints (admin only)
     path('api/admin/rate-limit/status/', RateLimitStatusAPI.as_view(), name='rate-limit-status'),
@@ -37,3 +39,4 @@ urlpatterns = [
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

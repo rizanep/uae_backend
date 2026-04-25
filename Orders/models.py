@@ -6,6 +6,106 @@ from Products.models import Product
 from Users.models import UserAddress
 from decimal import Decimal
 import uuid
+from django.utils import timezone
+import datetime
+import pytz
+
+UAE_TZ = pytz.timezone('Asia/Dubai')
+
+
+class DeliveryTimeSlot(models.Model):
+    """
+    Master configuration for delivery timeslots.
+    e.g. 8-9 AM with a 7:30 AM cutoff.
+    Active/inactive controlled globally and per-date via DeliverySlotOverride.
+    """
+    name = models.CharField(
+        _("slot name"),
+        max_length=100,
+        help_text=_("e.g. 'Morning Slot', '8 AM - 9 AM'")
+    )
+    start_time = models.TimeField(_("start time"), help_text=_("Slot starts at (e.g. 08:00)"))
+    end_time = models.TimeField(_("end time"), help_text=_("Slot ends at (e.g. 09:00)"))
+    cutoff_time = models.TimeField(
+        _("cutoff time"),
+        help_text=_("Orders must be placed before this time (same day) to select this slot. e.g. 07:30")
+    )
+    is_active = models.BooleanField(_("is active"), default=True, help_text=_("Globally enable/disable this slot"))
+    sort_order = models.PositiveIntegerField(_("sort order"), default=0, help_text=_("Lower numbers appear first"))
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Delivery Time Slot")
+        verbose_name_plural = _("Delivery Time Slots")
+        ordering = ["sort_order", "start_time"]
+
+    def __str__(self):
+        return f"{self.name} ({self.start_time.strftime('%I:%M %p')} - {self.end_time.strftime('%I:%M %p')})"
+
+    def clean(self):
+        if self.start_time and self.end_time and self.start_time >= self.end_time:
+            raise ValidationError(_("Start time must be before end time."))
+        if self.cutoff_time and self.start_time and self.cutoff_time >= self.start_time:
+            raise ValidationError(_("Cutoff time must be before the slot start time."))
+
+    def is_available_for_date(self, date):
+        """
+        Returns True if this slot is available for the given date.
+        Checks: global active, per-date override, and cutoff time (for today).
+        """
+        if not self.is_active:
+            return False
+
+        # Check per-date override
+        override = self.overrides.filter(date=date).first()
+        if override is not None:
+            return override.is_active
+
+        # If date is today, check cutoff time
+        now_uae = timezone.now().astimezone(UAE_TZ)
+        if date == now_uae.date():
+            return now_uae.time() < self.cutoff_time
+
+        # For future dates, slot is available as long as it's active
+        if date > now_uae.date():
+            return True
+
+        # Past dates - not available
+        return False
+
+
+class DeliverySlotOverride(models.Model):
+    """
+    Per-date availability override for a delivery timeslot.
+    Admins use this to deactivate a slot on a specific date (e.g. holiday, no drivers).
+    """
+    slot = models.ForeignKey(
+        DeliveryTimeSlot,
+        on_delete=models.CASCADE,
+        related_name="overrides",
+        verbose_name=_("delivery time slot")
+    )
+    date = models.DateField(_("date"), db_index=True)
+    is_active = models.BooleanField(
+        _("is active"),
+        default=False,
+        help_text=_("Set to False to disable this slot on this specific date")
+    )
+    reason = models.CharField(_("reason"), max_length=255, blank=True, help_text=_("Optional reason for override"))
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Delivery Slot Override")
+        verbose_name_plural = _("Delivery Slot Overrides")
+        unique_together = [("slot", "date")]
+        ordering = ["date", "slot__sort_order"]
+
+    def __str__(self):
+        status = "Active" if self.is_active else "Inactive"
+        return f"{self.slot.name} on {self.date} - {status}"
+
 
 class Order(models.Model):
     """
@@ -55,12 +155,13 @@ class Order(models.Model):
     
     # Delivery Preferences
     preferred_delivery_date = models.DateField(_("preferred delivery date"), blank=True, null=True)
-    preferred_delivery_slot = models.CharField(
-        _("preferred delivery slot"), 
-        max_length=50, 
-        blank=True, 
+    preferred_delivery_slot = models.ForeignKey(
+        DeliveryTimeSlot,
+        on_delete=models.SET_NULL,
         null=True,
-        help_text=_("e.g., 9AM - 12PM, 2PM - 5PM")
+        blank=True,
+        related_name="orders",
+        verbose_name=_("preferred delivery slot"),
     )
     delivery_notes = models.TextField(_("delivery notes"), blank=True, null=True)
 
@@ -298,6 +399,7 @@ class Payment(models.Model):
     )
     transaction_id = models.CharField(_("transaction ID"), max_length=100, unique=True, blank=True, null=True)
     ziina_payment_intent_id = models.CharField(_("Ziina Payment Intent ID"), max_length=200, blank=True, null=True)
+    refund_id = models.CharField(_("refund ID"), max_length=200, blank=True, null=True)
     amount = models.DecimalField(_("amount"), max_digits=12, decimal_places=2)
     status = models.CharField(
         _("status"),

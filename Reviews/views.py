@@ -3,6 +3,7 @@ from rest_framework.decorators import action, throttle_classes
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
 from django_filters.rest_framework import DjangoFilterBackend
+from django.db import models
 from core.throttling import UserReviewThrottle, AnonGeneralThrottle
 
 from .models import Review
@@ -57,6 +58,13 @@ class ReviewViewSet(viewsets.ModelViewSet):
         if self.request.user.is_staff:
             return queryset
 
+        # For authenticated users, show visible reviews + their own reviews (even if hidden)
+        if self.request.user.is_authenticated:
+            return queryset.filter(
+                models.Q(is_visible=True) | models.Q(user=self.request.user)
+            )
+
+        # For anonymous users, only show visible reviews
         return queryset.filter(is_visible=True)
 
     def get_permissions(self):

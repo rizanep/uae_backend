@@ -93,15 +93,17 @@ class AdminCouponSerializer(serializers.ModelSerializer):
         discount_type = attrs.get('discount_type')
         discount_value = attrs.get('discount_value')
         
-        if discount_type == 'percentage' and (discount_value < 0 or discount_value > 100):
-            raise serializers.ValidationError(
-                {'discount_value': 'Percentage discount must be between 0 and 100.'}
-            )
-        
-        if discount_value < 0:
-            raise serializers.ValidationError(
-                {'discount_value': 'Discount value cannot be negative.'}
-            )
+        # Only validate if discount_value is provided (not None)
+        if discount_value is not None:
+            if discount_type == 'percentage' and (discount_value < 0 or discount_value > 100):
+                raise serializers.ValidationError(
+                    {'discount_value': 'Percentage discount must be between 0 and 100.'}
+                )
+            
+            if discount_value < 0:
+                raise serializers.ValidationError(
+                    {'discount_value': 'Discount value cannot be negative.'}
+                )
         
         return attrs
 

@@ -15,21 +15,29 @@ class ProductDiscountTierSerializer(serializers.ModelSerializer):
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Category
-        fields = ["id", "name", "slug", "description", "image", "parent"]
+        fields = ["id", "name", "name_arabic", "name_chinese", "slug", "description", "image", "parent"]
         read_only_fields = ["id", "slug"]
 
 
 class ProductImageSerializer(serializers.ModelSerializer):
+    product_id = serializers.PrimaryKeyRelatedField(
+        queryset=Product.objects.all(), source="product", write_only=True, required=False
+    )
+
     class Meta:
         model = ProductImage
-        fields = ["id", "image", "is_feature", "created_at"]
+        fields = ["id", "product", "product_id", "image", "is_feature", "created_at"]
         read_only_fields = ["id", "created_at"]
 
 
 class ProductVideoSerializer(serializers.ModelSerializer):
+    product_id = serializers.PrimaryKeyRelatedField(
+        queryset=Product.objects.all(), source="product", write_only=True, required=False
+    )
+
     class Meta:
         model = ProductVideo
-        fields = ["id", "video_file", "video_url", "title", "created_at"]
+        fields = ["id", "product", "product_id", "video_file", "video_url", "title", "created_at"]
         read_only_fields = ["id", "created_at"]
 
 

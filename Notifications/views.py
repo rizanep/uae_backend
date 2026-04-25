@@ -2,19 +2,23 @@ from rest_framework import viewsets, mixins, status, permissions
 from rest_framework.decorators import action, throttle_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.filters import SearchFilter, OrderingFilter
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+from django.db.models import Count, Q
 from django_filters.rest_framework import DjangoFilterBackend
 from Users.permissions import IsAdmin
 from core.throttling import UserContactThrottle, AnonContactThrottle
-from .models import Notification, Broadcast, NotificationTemplate, NotificationType, ContactMessage
+from .models import Notification, Broadcast, NotificationTemplate, NotificationType, ContactMessage, FCMDevice
 from .serializers import (
     NotificationSerializer,
     BroadcastSerializer,
     NotificationTemplateSerializer,
-    ContactMessageSerializer
+    ContactMessageSerializer,
+    FCMDeviceSerializer,
 )
 from .tasks import send_contact_reply_email
+from .push_service import send_push_to_all_users, send_push_to_tokens
 
 class NotificationViewSet(
     mixins.ListModelMixin,
@@ -25,9 +29,32 @@ class NotificationViewSet(
 ):
     serializer_class = NotificationSerializer
     permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['is_read']
 
     def get_queryset(self):
         return Notification.objects.filter(user=self.request.user).select_related('user').order_by("-created_at")
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        counts = Notification.objects.filter(user=request.user).aggregate(
+            total=Count('id'),
+            read=Count('id', filter=Q(is_read=True)),
+            unread=Count('id', filter=Q(is_read=False)),
+        )
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            response = self.get_paginated_response(serializer.data)
+            response.data.update(counts)
+            return response
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'results': serializer.data,
+            **counts,
+        })
 
     @action(detail=False, methods=["post"])
     def mark_all_as_read(self, request):
@@ -93,16 +120,28 @@ class BroadcastViewSet(viewsets.ModelViewSet):
             ]
             Notification.objects.bulk_create(notifications, batch_size=1000)
             sent_count = len(notifications)
+        elif notif_type == NotificationType.PUSH:
+            # Send real FCM push notifications
+            from .models import FCMDevice
+            recipient_id_list = list(recipient_ids)
+            tokens = list(
+                FCMDevice.objects.filter(
+                    user_id__in=recipient_id_list, is_active=True
+                ).values_list("registration_token", flat=True)
+            )
+            if tokens:
+                result = send_push_to_tokens(tokens, subject, message)
+                sent_count = result["success_count"]
+            else:
+                sent_count = 0
         else:
-            # For other types, still iterate but get user count only
+            # For other types (EMAIL, SMS), still mock
             sent_count = len(list(recipient_ids))
             for user_id in recipient_ids:
                 if notif_type == NotificationType.EMAIL:
                     print(f"Mock Sending Email to user {user_id}: {subject}")
                 elif notif_type == NotificationType.SMS:
                     print(f"Mock Sending SMS to user {user_id}: {message}")
-                elif notif_type == NotificationType.PUSH:
-                    print(f"Mock Sending Push to user {user_id}: {message}")
 
         broadcast.is_sent = True
         broadcast.sent_at = timezone.now()
@@ -123,8 +162,11 @@ class ContactMessageViewSet(viewsets.ModelViewSet):
     """
     queryset = ContactMessage.objects.all().order_by("-created_at")
     serializer_class = ContactMessageSerializer
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = "__all__"
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['is_resolved', 'created_at']
+    search_fields = ['name', 'email', 'subject', 'message']
+    ordering_fields = ['created_at', 'is_resolved', 'name']
+    ordering = ['-created_at']
 
     def get_throttles(self):
         """Apply strict throttling for contact message creation to prevent spam"""
@@ -137,10 +179,11 @@ class ContactMessageViewSet(viewsets.ModelViewSet):
         """
         Different permissions for different actions:
         - list/retrieve: Admin only
+        - update/partial_update (PUT/PATCH): Admin only
         - create: Authenticated users only
         - reply: Admin only
         """
-        if self.action in ['list', 'retrieve']:
+        if self.action in ['list', 'retrieve', 'update', 'partial_update']:
             return [IsAdmin()]
         elif self.action == 'reply':
             return [IsAdmin()]
@@ -196,7 +239,7 @@ class ContactMessageViewSet(viewsets.ModelViewSet):
 
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
-
+    
     @action(detail=True, methods=["post"], permission_classes=[IsAdmin])
     def reply(self, request, pk=None):
         """
@@ -223,4 +266,48 @@ class ContactMessageViewSet(viewsets.ModelViewSet):
         return Response(
             {"detail": "Reply is being sent. Email will be delivered shortly."},
             status=status.HTTP_200_OK
+        )
+
+
+class FCMDeviceViewSet(
+    mixins.CreateModelMixin,
+    mixins.ListModelMixin,
+    mixins.DestroyModelMixin,
+    viewsets.GenericViewSet
+):
+    """
+    Manage FCM device tokens for push notifications.
+    - POST: Register a new device token (or reactivate an existing one)
+    - GET: List current user's registered devices
+    - DELETE: Remove a device token
+    """
+    serializer_class = FCMDeviceSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return FCMDevice.objects.filter(user=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        token = request.data.get("registration_token")
+        if not token:
+            return Response(
+                {"error": "registration_token is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # If the token already exists for this user, reactivate it
+        device, created = FCMDevice.objects.update_or_create(
+            registration_token=token,
+            defaults={
+                "user": request.user,
+                "device_type": request.data.get("device_type", "WEB"),
+                "device_name": request.data.get("device_name", ""),
+                "is_active": True,
+            },
+        )
+
+        serializer = self.get_serializer(device)
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )

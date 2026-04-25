@@ -13,6 +13,8 @@ class Category(SoftDeleteModel):
     Suitable for marine products like Fish, Meat, etc.
     """
     name = models.CharField(_("name"), max_length=100)
+    name_arabic = models.CharField(_("name arabic"), max_length=100, blank=True)
+    name_chinese = models.CharField(_("name chinese"), max_length=100, blank=True)
     slug = models.SlugField(_("slug"), max_length=120, unique=True, blank=True)
     description = models.TextField(_("description"), blank=True)
     image = models.ImageField(_("image"), upload_to="categories/", blank=True, null=True)
@@ -105,6 +107,18 @@ class Product(SoftDeleteModel):
         return self.name
 
     def save(self, *args, **kwargs):
+        # Check if stock is increasing from 0
+        if self.pk:
+            try:
+                old_product = Product.objects.get(pk=self.pk)
+                stock_was_zero = old_product.stock == 0
+                stock_now_positive = self.stock > 0
+                if stock_was_zero and stock_now_positive:
+                    # Trigger notifications
+                    self._notify_stock_availability()
+            except Product.DoesNotExist:
+                pass
+
         if not self.slug:
             self.slug = slugify(self.name)
         if not self.sku:
@@ -118,6 +132,43 @@ class Product(SoftDeleteModel):
                 candidate = f"{base[:50 - len(suffix)]}{suffix}"
             self.sku = candidate
         super().save(*args, **kwargs)
+
+    def _notify_stock_availability(self):
+        """
+        Notify users who requested notifications for this product.
+        """
+        from django.db import transaction
+        from Notifications.tasks import send_stock_notification_email, send_stock_notification_whatsapp
+        from Notifications.push_service import send_push_to_user
+
+        # Get all pending notifications for this product
+        pending_notifications = ProductNotification.objects.filter(
+            product=self,
+            notified=False
+        ).select_related('user')
+
+        for notification in pending_notifications:
+            user = notification.user
+
+            # Send email if user has email
+            if user.email:
+                send_stock_notification_email.delay(user.id, self.name)
+
+            # Send WhatsApp if user has phone
+            if user.phone_number:
+                send_stock_notification_whatsapp.delay(user.id, self.name)
+
+            # Send push notification
+            send_push_to_user(
+                user=user,
+                title="Product Back in Stock!",
+                body=f"Good news! {self.name} is now available.",
+                data={"product_id": self.id, "type": "stock_available"}
+            )
+
+            # Mark as notified
+            notification.notified = True
+            notification.save()
 
     @property
     def final_price(self):
@@ -170,3 +221,32 @@ class ProductVideo(models.Model):
 
     def __str__(self):
         return self.title or f"Video for {self.product.name}"
+
+
+class ProductNotification(models.Model):
+    """
+    Tracks users who want to be notified when a product comes back in stock.
+    """
+    user = models.ForeignKey(
+        'Users.User',
+        on_delete=models.CASCADE,
+        related_name='product_notifications',
+        verbose_name=_("user"),
+    )
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name='notifications',
+        verbose_name=_("product"),
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    notified = models.BooleanField(_("notified"), default=False)
+
+    class Meta:
+        verbose_name = _("Product Notification")
+        verbose_name_plural = _("Product Notifications")
+        unique_together = ['user', 'product']
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.user} - {self.product.name}"

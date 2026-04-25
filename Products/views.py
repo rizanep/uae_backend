@@ -7,7 +7,7 @@ from django.db.models import Avg, Count, Q
 from django.core.cache import cache
 from django.conf import settings
 import hashlib
-from .models import Category, Product, ProductImage, ProductVideo, ProductDeliveryTier, ProductDiscountTier
+from .models import Category, Product, ProductImage, ProductVideo, ProductDeliveryTier, ProductDiscountTier, ProductNotification
 from .serializers import (
     CategorySerializer,
     ProductSerializer,
@@ -45,13 +45,15 @@ class CategoryViewSet(viewsets.ModelViewSet):
     serializer_class = CategorySerializer
     permission_classes = [IsAdminOrReadOnly]
     filter_backends = [filters.SearchFilter, django_filters.DjangoFilterBackend]
-    search_fields = ["name", "description"]
+    search_fields = ["name", "name_arabic", "name_chinese", "description"]
     filterset_fields = [
         "id",
         "created_at",
         "updated_at",
         "deleted_at",
         "name",
+        "name_arabic",
+        "name_chinese",
         "slug",
         "description",
         "parent",
@@ -104,7 +106,8 @@ class ProductFilter(django_filters.FilterSet):
     max_price = django_filters.NumberFilter(field_name="price", lookup_expr="lte")
 
     category_slug = django_filters.CharFilter(field_name="category__slug")
-
+    category_name = django_filters.CharFilter(field_name="category__name")
+    
     available_emirates = django_filters.CharFilter(method="filter_emirates")
 
     class Meta:
@@ -184,6 +187,33 @@ class ProductViewSet(viewsets.ModelViewSet):
             "active": active,
             "out_of_stock": out_of_stock,
             "low_stock": low_stock
+        })
+
+    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
+    def notify_stock(self, request, pk=None):
+        """
+        Allow authenticated users to request notification when product comes back in stock.
+        Only one notification per user per product.
+        """
+        try:
+            product = self.get_object()
+        except Product.DoesNotExist:
+            return Response({"detail": "Product not found."}, status=404)
+
+        if product.stock > 0:
+            return Response({"detail": "Product is currently in stock."}, status=400)
+
+        # Try to get or create the notification
+        notification, created = ProductNotification.objects.get_or_create(
+            user=request.user,
+            product=product,
+            defaults={'notified': False}
+        )
+
+        # Always return success, whether created or already existed
+        return Response({
+            "detail": "You will be notified when this product comes back in stock.",
+            "created": created
         })
 
     def perform_destroy(self, instance):

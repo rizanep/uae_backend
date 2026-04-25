@@ -105,6 +105,21 @@ Content-Type: application/json
 }
 ```
 
+**Error Response (400 - Insufficient Stock):**
+```json
+{
+    "error": "Insufficient stock for one or more products.",
+    "stock_details": [
+        {
+            "product_id": 123,
+            "product_name": "Fresh Fish",
+            "requested_quantity": 5,
+            "available_stock": 2
+        }
+    ]
+}
+```
+
 **What It Shows:**
 - `cart_total_before_discount` - Original cart value
 - `discount_amount` - How much you save
@@ -112,6 +127,10 @@ Content-Type: application/json
 - `delivery_charge` - Shipping (0 if >= 40, else 10)
 - `tip_amount` - Optional tip
 - `final_total` - What user pays
+
+**Validations:**
+- ✅ Stock availability checked for all cart items
+- ✅ Returns detailed error if any product is out of stock
 
 ---
 
@@ -229,7 +248,74 @@ POST /orders/delivery_charge_settings/
 
 ---
 
-## 📊 PARAMETERS REFERENCE
+## 6️⃣ PAYMENT REFUND ENDPOINTS (ADMIN ONLY)
+
+**Create Refund:**
+```
+POST /orders/payments/{payment_id}/create_refund/
+
+{
+    "amount": 100.00,
+    "reason": "Customer request"
+}
+```
+
+**Response (200):**
+```json
+{
+    "refund_id": "REF123456789",
+    "status": "INITIATED",
+    "amount": "100.00",
+    "message": "Refund initiated successfully"
+}
+```
+
+**Get Refund Status:**
+```
+GET /orders/payments/{payment_id}/refund_status/
+```
+
+**Response (200):**
+```json
+{
+    "refund_id": "REF123456789",
+    "status": "COMPLETED",
+    "amount": "100.00",
+    "processed_at": "2024-01-15T14:30:00Z",
+    "message": "Refund completed successfully"
+}
+```
+
+**Notes:**
+- Only admin users can access these endpoints
+- Refunds are processed through Ziina Payment Gateway
+- Status values: `INITIATED`, `PROCESSING`, `COMPLETED`, `FAILED`
+- Amount must be less than or equal to original payment amount
+
+---
+
+## 7️⃣ PROMOTIONAL CONTENT API
+
+**Get Delivery Offers:**
+```
+GET /marketing/promotional/delivery_offers/
+```
+
+**Response (200):**
+```json
+{
+    "free_delivery_text": "Purchase for AED 40 or above for FREE delivery",
+    "next_delivery_slot_text": "Order before 8:00 AM to get delivery between 11:00 - 12:00",
+    "current_time": "2024-01-15T07:30:00+04:00"
+}
+```
+
+**Notes:**
+- Returns dynamic promotional texts based on current delivery settings
+- Time-based delivery slot suggestions
+- No authentication required (public endpoint)
+
+---
 
 ### Order Status Values
 ```

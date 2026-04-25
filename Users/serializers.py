@@ -200,7 +200,7 @@ class UserAdminSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = User
-        fields = '__all__'
+        exclude = ['password']
 
     def validate(self, attrs):
         email = attrs.get('email', None)
@@ -240,6 +240,11 @@ class OTPRequestSerializer(serializers.Serializer):
     first_name = serializers.CharField(required=False, allow_blank=True)
     last_name = serializers.CharField(required=False, allow_blank=True)
     otp_type = serializers.ChoiceField(choices=[('email', 'Email'), ('phone', 'Phone')])
+    otp_platform = serializers.ChoiceField(
+        choices=[('sms', 'SMS'), ('whatsapp', 'WhatsApp')],
+        required=False,
+        default='sms'
+    )
 
     def validate(self, attrs):
         otp_type = attrs.get('otp_type')
@@ -247,6 +252,8 @@ class OTPRequestSerializer(serializers.Serializer):
             raise serializers.ValidationError("Email is required for email OTP.")
         if otp_type == 'phone' and not attrs.get('phone_number'):
             raise serializers.ValidationError("Phone number is required for phone OTP.")
+        if otp_type == 'email':
+            attrs['otp_platform'] = 'sms'
         return attrs
     
     def create(self, validated_data):
@@ -279,11 +286,17 @@ class OTPRequestSerializer(serializers.Serializer):
             )
             is_new_user = True
 
-        # Generate 6 digit OTP
-        if settings.USE_REAL_TWILIO_OTP and otp_type == 'phone':
-            code = str(random.randint(100000, 999999))
-        else:
-            code = "000000"
+        # Generate a secure OTP only when real delivery channel is enabled.
+        use_real_phone_otp = (
+            getattr(settings, 'USE_REAL_TWILIO_OTP', False)
+            or getattr(settings, 'USE_REAL_MSG91_SMS', False)
+            or getattr(settings, 'USE_REAL_MSG91_WHATSAPP', False)
+        )
+        # use_real_email_otp = getattr(settings, 'USE_REAL_SMTP', False)
+        use_real_email_otp =False
+
+        should_use_real_otp = (otp_type == 'phone' and use_real_phone_otp) or (otp_type == 'email' and use_real_email_otp)
+        code = str(random.randint(100000, 999999)) if should_use_real_otp else "000000"
             
         # Save OTP to database
         if not user:
@@ -597,3 +610,62 @@ class DeliveryBoyUpdateSerializer(serializers.Serializer):
         profile.save()
 
         return User.objects.select_related('profile', 'delivery_profile').get(pk=instance.pk)
+
+
+class AccountDeletionRequestSerializer(serializers.Serializer):
+    """Serializer for account deletion request"""
+    # password = serializers.CharField(
+    #     write_only=True,
+    #     required=False,
+    #     help_text="Password confirmation required for security"
+    # )
+    delete_method = serializers.ChoiceField(
+        choices=['soft', 'hard'],
+        default='soft',
+        help_text="soft: anonymize account, hard: permanently delete all data"
+    )
+    confirm_deletion = serializers.BooleanField(
+        default=False,
+        help_text="Must be True to confirm account deletion"
+    )
+    
+    def validate(self, data):
+        """Validate deletion request"""
+        user = self.context['request'].user
+        
+        # Verify password
+        # if not user.check_password(data['password']):
+        #     raise serializers.ValidationError("Invalid password")
+        
+        # Require explicit confirmation
+        if not data['confirm_deletion']:
+            raise serializers.ValidationError(
+                "You must confirm account deletion by setting confirm_deletion to true"
+            )
+        
+        # Check if account can be deleted
+        from .account_deletion_service import AccountDeletionService
+        can_delete, reason = AccountDeletionService.can_delete_account(user)
+        if not can_delete:
+            raise serializers.ValidationError(reason)
+        
+        return data
+
+
+class AccountDeletionInfoSerializer(serializers.Serializer):
+    """Serializer for account deletion information"""
+    user = serializers.DictField()
+    related_data = serializers.DictField()
+    note = serializers.CharField()
+
+
+class AccountDeletionResponseSerializer(serializers.Serializer):
+    """Serializer for account deletion response"""
+    status = serializers.CharField()
+    user_id = serializers.IntegerField()
+    user_email = serializers.EmailField()
+    user_phone = serializers.CharField(allow_null=True)
+    deletion_method = serializers.CharField()
+    deletion_status = serializers.CharField()
+    deleted_at = serializers.DateTimeField()
+    message = serializers.CharField()

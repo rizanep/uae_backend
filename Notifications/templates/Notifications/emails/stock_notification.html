@@ -1,0 +1,39 @@
+{% extends "Notifications/emails/base.html" %}
+
+{% block title %}Product Back in Stock - Simak Fresh{% endblock %}
+
+{% block page_title %}Great News! Product Back in Stock{% endblock %}
+
+{% block content %}
+<div class="highlight">
+    <h2>🎉 Good news, {{ user.first_name|default:user.email }}!</h2>
+    <p>The product you've been waiting for is now back in stock!</p>
+</div>
+
+<div style="margin: 20px 0;">
+    <h3>Product Details:</h3>
+    <p><strong>{{ product_name }}</strong></p>
+
+    <p>We're excited to let you know that <strong>{{ product_name }}</strong> is now available in our inventory again.</p>
+
+    <p>Don't miss out - head to our app and place your order now!</p>
+
+    <div style="text-align: center; margin: 30px 0;">
+        <a href="{{ site_url }}/products" class="button">Shop Now</a>
+    </div>
+
+    <p style="color: #6c757d; font-size: 14px;">
+        You received this notification because you requested to be notified when this product became available again.
+    </p>
+</div>
+
+<div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+    <h4>Why choose Simak Fresh?</h4>
+    <ul>
+        <li>✅ Fresh, high-quality products</li>
+        <li>✅ Fast delivery across UAE</li>
+        <li>✅ Secure online payments</li>
+        <li>✅ Excellent customer service</li>
+    </ul>
+</div>
+{% endblock %}

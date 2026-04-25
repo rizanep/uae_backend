@@ -33,6 +33,8 @@ INSTALLED_APPS = [
     'Notifications',
     'django_filters',
     'Marketing.apps.MarketingConfig',
+    'WhatsApp.apps.WhatsappConfig',
+    'SMS.apps.SmsConfig',
 ]
 
 MIDDLEWARE = [
@@ -132,10 +134,14 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# Site URL for emails and links
+SITE_URL = os.environ.get('SITE_URL', 'https://simakfresh.ae')
+
 # Twilio Configuration
 TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
-TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER')
+TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '918281740483')
 # Toggle real Twilio SMS sending for OTPs (False => use console + 000000)
 USE_REAL_TWILIO_OTP = os.environ.get('USE_REAL_TWILIO_OTP', 'false').lower() == 'true'
 
@@ -150,9 +156,12 @@ GOOGLE_OAUTH_REDIRECT_URI = os.environ.get(
 # Ziina Payment Gateway
 ZIINA_API_KEY = os.environ.get('ZIINA_ID')
 ZIINA_TEST_MODE = os.environ.get('ZIINA_TEST_MODE', 'true').lower() == 'true'
-ZIINA_SUCCESS_URL = os.environ.get('ZIINA_SUCCESS_URL', 'http://localhost:3000/payment/success')
-ZIINA_CANCEL_URL = os.environ.get('ZIINA_CANCEL_URL', 'http://localhost:3000/payment/cancelled')
-ZIINA_FAILURE_URL = os.environ.get('ZIINA_FAILURE_URL', 'http://localhost:3000/payment/failed')
+ZIINA_APP_SUCCESS_URL = os.environ.get('ZIINA_APP_SUCCESS_URL', 'myapp://payment/success')
+ZIINA_APP_CANCEL_URL = os.environ.get('ZIINA_APP_CANCEL_URL', 'myapp://payment/cancel')
+ZIINA_APP_FAILURE_URL = os.environ.get('ZIINA_APP_FAILURE_URL', 'myapp://payment/pending')
+ZIINA_SUCCESS_URL = os.environ.get('ZIINA_SUCCESS_URL', 'https://simakfresh.ae/payment/success')
+ZIINA_CANCEL_URL = os.environ.get('ZIINA_CANCEL_URL', 'https://simakfresh.ae/payment/cancelled')
+ZIINA_FAILURE_URL = os.environ.get('ZIINA_FAILURE_URL', 'https://simakfresh.ae/payment/failed')
 
 # Custom user model
 AUTH_USER_MODEL = 'Users.User'
@@ -169,7 +178,7 @@ EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER)
 
-USE_REAL_SMTP = os.environ.get('USE_REAL_SMTP', 'false').lower() == 'false'
+USE_REAL_SMTP = os.environ.get('USE_REAL_SMTP', 'false').lower() == 'true'
 
 # DRF configuration
 REST_FRAMEWORK = {
@@ -183,8 +192,6 @@ REST_FRAMEWORK = {
 
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination",
     "PAGE_SIZE": 10,
-
-
 }
 # SimpleJWT basic settings
 from datetime import timedelta
@@ -279,6 +286,14 @@ LOGGING = {
             'backupCount': 10,
             'formatter': 'verbose',
         },
+        'whatsapp_file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': os.path.join(BASE_DIR, 'logs', 'whatsapp.log'),
+            'maxBytes': 1024 * 1024 * 10,  # 10MB
+            'backupCount': 10,
+            'formatter': 'verbose',
+        },
     },
     'loggers': {
         'django': {
@@ -296,6 +311,11 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        'WhatsApp': {
+            'handlers': ['console', 'whatsapp_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
     }
 }
 
@@ -306,3 +326,44 @@ if not os.path.exists(LOGS_DIR):
 
 # Ziina Webhook Secret
 ZIINA_WEBHOOK_SECRET = os.environ.get('WEBHOOK_SECRET')
+
+# Firebase Cloud Messaging
+FIREBASE_CREDENTIALS_FILE = os.path.join(BASE_DIR, 'firebase-credentials.json')
+
+# ============================================================================
+# MSG91 WhatsApp Integration Configuration
+# ============================================================================
+MSG91_AUTH_KEY = os.environ.get('MSG91_AUTH_KEY', '')
+MSG91_INTEGRATED_NUMBER = os.environ.get('MSG91_INTEGRATED_NUMBER', '')
+
+# Channel toggles
+USE_REAL_MSG91_SMS = os.environ.get('USE_REAL_MSG91_SMS', 'false').lower() == 'true'
+USE_REAL_MSG91_WHATSAPP = os.environ.get('USE_REAL_MSG91_WHATSAPP', 'false').lower() == 'true'
+
+# OTP templates
+MSG91_OTP_SMS_TEMPLATE_ID = os.environ.get('MSG91_OTP_SMS_TEMPLATE_ID', '')
+MSG91_OTP_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_OTP_WHATSAPP_TEMPLATE_NAME', '')
+
+# Order lifecycle templates
+MSG91_ORDER_PENDING_SMS_TEMPLATE_ID = os.environ.get('MSG91_ORDER_PENDING_SMS_TEMPLATE_ID', '')
+MSG91_ORDER_PENDING_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_ORDER_PENDING_WHATSAPP_TEMPLATE_NAME', '')
+MSG91_ORDER_PAID_SMS_TEMPLATE_ID = os.environ.get('MSG91_ORDER_PAID_SMS_TEMPLATE_ID', '')
+MSG91_ORDER_PAID_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_ORDER_PAID_WHATSAPP_TEMPLATE_NAME', '')
+MSG91_ORDER_PROCESSING_SMS_TEMPLATE_ID = os.environ.get('MSG91_ORDER_PROCESSING_SMS_TEMPLATE_ID', '')
+MSG91_ORDER_PROCESSING_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_ORDER_PROCESSING_WHATSAPP_TEMPLATE_NAME', '')
+MSG91_ORDER_SHIPPED_SMS_TEMPLATE_ID = os.environ.get('MSG91_ORDER_SHIPPED_SMS_TEMPLATE_ID', '')
+MSG91_ORDER_SHIPPED_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_ORDER_SHIPPED_WHATSAPP_TEMPLATE_NAME', '')
+MSG91_ORDER_DELIVERED_SMS_TEMPLATE_ID = os.environ.get('MSG91_ORDER_DELIVERED_SMS_TEMPLATE_ID', '')
+MSG91_ORDER_DELIVERED_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_ORDER_DELIVERED_WHATSAPP_TEMPLATE_NAME', '')
+MSG91_ORDER_CANCELLED_SMS_TEMPLATE_ID = os.environ.get('MSG91_ORDER_CANCELLED_SMS_TEMPLATE_ID', '')
+MSG91_ORDER_CANCELLED_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_ORDER_CANCELLED_WHATSAPP_TEMPLATE_NAME', '')
+
+# Payment receipt templates
+MSG91_PAYMENT_RECEIPT_SMS_TEMPLATE_ID = os.environ.get('MSG91_PAYMENT_RECEIPT_SMS_TEMPLATE_ID', '')
+MSG91_PAYMENT_RECEIPT_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_PAYMENT_RECEIPT_WHATSAPP_TEMPLATE_NAME', '')
+
+# WhatsApp configuration
+WHATSAPP_ENABLE_LOGGING = os.environ.get('WHATSAPP_ENABLE_LOGGING', 'true').lower() == 'true'
+WHATSAPP_MAX_RETRIES = int(os.environ.get('WHATSAPP_MAX_RETRIES', '3'))
+WHATSAPP_REQUEST_TIMEOUT = int(os.environ.get('WHATSAPP_REQUEST_TIMEOUT', '30'))  # seconds
+
