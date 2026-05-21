@@ -202,6 +202,14 @@ Best regards,
 """
         
         try:
+            if not getattr(settings, "USE_REAL_SMTP", False):
+                print(
+                    "[EMAIL CONSOLE MODE] "
+                    f"to={email} subject={subject!r} action={deletion_type}"
+                )
+                logger.info("SMTP disabled; printed deletion confirmation payload for %s", email)
+                return
+
             send_mail(
                 subject=subject,
                 message=message,

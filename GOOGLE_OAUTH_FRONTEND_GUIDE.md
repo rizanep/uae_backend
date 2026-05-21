@@ -7,7 +7,7 @@ Complete guide for integrating Google OAuth login in your frontend application.
 ## 🎯 Overview
 
 The backend has Google OAuth credentials configured and ready:
-- **Client ID:** `850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleusercontent.com`
+- **Client ID:** `470304276733-kt1v78349g2kecepe4dpl1371jvdpb6k.apps.googleusercontent.com`
 - **Redirect URI:** `http://localhost:8000/api/users/google/callback/`
 
 The frontend needs to:
@@ -90,7 +90,7 @@ import { GoogleOAuthProvider, GoogleLogin } from '@react-oauth/google';
 
 export default function App() {
   return (
-    <GoogleOAuthProvider clientId="850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleusercontent.com">
+    <GoogleOAuthProvider clientId="470304276733-kt1v78349g2kecepe4dpl1371jvdpb6k.apps.googleusercontent.com">
       <LoginPage />
     </GoogleOAuthProvider>
   );
@@ -163,7 +163,7 @@ export function GoogleLoginButton() {
 import { GoogleLogin } from '@react-oauth/google'; // Or use vue3-google-login
 import axios from 'axios';
 
-const googleClientId = '850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleusercontent.com';
+const googleClientId = '470304276733-kt1v78349g2kecepe4dpl1371jvdpb6k.apps.googleusercontent.com';
 
 async function handleGoogleSuccess(response) {
   try {
@@ -192,7 +192,7 @@ function handleGoogleError() {
 #### Vanilla JavaScript:
 ```html
 <div id="g_id_onload"
-     data-client_id="850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleusercontent.com"
+     data-client_id="470304276733-kt1v78349g2kecepe4dpl1371jvdpb6k.apps.googleusercontent.com"
      data-callback="handleCredentialResponse">
 </div>
 <div class="g_id_signin" data-type="standard"></div>
@@ -226,7 +226,7 @@ async function handleCredentialResponse(response) {
 
 window.onload = function () {
   google.accounts.id.initialize({
-    client_id: '850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleusercontent.com'
+    client_id: '470304276733-kt1v78349g2kecepe4dpl1371jvdpb6k.apps.googleusercontent.com'
   });
   google.accounts.id.renderButton(
     document.querySelector('.g_id_signin'),
@@ -445,7 +445,7 @@ import React, { useState } from 'react';
 import { GoogleOAuthProvider, GoogleLogin } from '@react-oauth/google';
 import axios from 'axios';
 
-const GOOGLE_CLIENT_ID = '850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID = '470304276733-kt1v78349g2kecepe4dpl1371jvdpb6k.apps.googleusercontent.com';
 
 export function LoginPage() {
   const [loading, setLoading] = useState(false);
@@ -549,7 +549,7 @@ export default LoginPage;
 ```bash
 # 1. Get authorization code from Google (manual process)
 # Open in browser:
-# https://accounts.google.com/o/oauth2/v2/auth?client_id=850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleusercontent.com&redirect_uri=http://localhost:8000/api/users/google/callback/&response_type=code&scope=email%20profile
+# https://accounts.google.com/o/oauth2/v2/auth?client_id=470304276733-kt1v78349g2kecepe4dpl1371jvdpb6k.apps.googleusercontent.com&redirect_uri=http://localhost:8000/api/users/google/callback/&response_type=code&scope=email%20profile
 
 # 2. Copy the 'code' parameter from redirect URL
 
@@ -595,7 +595,7 @@ Create `.env` in your frontend root:
 
 ```env
 VITE_API_URL=http://localhost:8000/api
-VITE_GOOGLE_CLIENT_ID=850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleusercontent.com
+VITE_GOOGLE_CLIENT_ID=470304276733-kt1v78349g2kecepe4dpl1371jvdpb6k.apps.googleusercontent.com
 ```
 
 Usage:

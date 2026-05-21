@@ -134,6 +134,30 @@ class DeliveryCancellationRequestSerializer(serializers.ModelSerializer):
         ]
 
 
+class AdminDeliveryCancellationRequestSerializer(serializers.ModelSerializer):
+    order_id = serializers.IntegerField(source='order.id', read_only=True)
+    order_status = serializers.CharField(source='order.status', read_only=True)
+    requested_by_email = serializers.EmailField(source='requested_by.email', read_only=True)
+    requested_by_phone = serializers.CharField(source='requested_by.phone_number', read_only=True, default=None)
+    reviewed_by_email = serializers.EmailField(source='reviewed_by.email', read_only=True, default=None)
+
+    class Meta:
+        model = DeliveryCancellationRequest
+        fields = [
+            "id",
+            "order_id",
+            "order_status",
+            "requested_by_email",
+            "requested_by_phone",
+            "reason",
+            "status",
+            "review_notes",
+            "reviewed_by_email",
+            "requested_at",
+            "reviewed_at",
+        ]
+
+
 class ReceiptSerializer(serializers.ModelSerializer):
     class Meta:
         model = Receipt
@@ -151,10 +175,29 @@ class PaymentSerializer(serializers.ModelSerializer):
 class OrderItemSerializer(serializers.ModelSerializer):
     subtotal = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     product_image = serializers.SerializerMethodField()
+    product_unit = serializers.CharField(source="product.unit", read_only=True)
+    product_unit_display = serializers.CharField(source="product.get_unit_display", read_only=True)
+    total_with_preparation = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
 
     class Meta:
         model = OrderItem
-        fields = ["id", "product", "product_name", "product_image", "quantity", "price", "subtotal"]
+        fields = [
+            "id",
+            "product",
+            "product_name",
+            "product_image",
+            "product_unit",
+            "product_unit_display",
+            "quantity",
+            "price",
+            "subtotal",
+            "preparation_specification",
+            "preparation_specification_name",
+            "preparation_extra_price",
+            "preparation_instructions",
+            "total_with_preparation",
+        ]
+        read_only_fields = ["preparation_specification_name", "preparation_extra_price", "total_with_preparation"]
 
     def get_product_image(self, obj):
         if obj.product and obj.product.image:
@@ -167,7 +210,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
-    shipping_address_details = UserAddressSerializer(source="shipping_address", read_only=True)
+    shipping_address_details = serializers.SerializerMethodField()
     status_history = OrderStatusHistorySerializer(many=True, read_only=True)
     payment = PaymentSerializer(read_only=True)
     delivery_assignment = DeliveryAssignmentSerializer(read_only=True)
@@ -203,6 +246,75 @@ class OrderSerializer(serializers.ModelSerializer):
             "user"
         ]
         read_only_fields = ["id","user", "status", "total_amount", "tip_amount", "coupon", "discount_amount", "delivery_charge", "created_at", "updated_at"]
+
+    def get_shipping_address_details(self, obj):
+        if obj.shipping_address:
+            return UserAddressSerializer(obj.shipping_address, context=self.context).data
+
+        if isinstance(obj.shipping_address_snapshot, dict):
+            return obj.shipping_address_snapshot
+
+        return None
+
+
+class OrderListSerializer(serializers.ModelSerializer):
+    customer_name = serializers.SerializerMethodField()
+    customer_email = serializers.CharField(source='user.email', read_only=True)
+    customer_phone = serializers.CharField(source='user.phone_number', read_only=True)
+    payment_status = serializers.CharField(source='payment.status', read_only=True, default=None)
+    delivery_assignment_status = serializers.CharField(source='delivery_assignment.status', read_only=True, default=None)
+    cancel_request_status = serializers.CharField(source='delivery_cancel_request.status', read_only=True, default=None)
+    shipping_address_summary = serializers.SerializerMethodField()
+    preferred_delivery_slot_name = serializers.CharField(source='preferred_delivery_slot.name', read_only=True, default=None)
+
+    class Meta:
+        model = Order
+        fields = [
+            "id",
+            "status",
+            "total_amount",
+            "tip_amount",
+            "delivery_charge",
+            "preferred_delivery_date",
+            "preferred_delivery_slot",
+            "preferred_delivery_slot_name",
+            "created_at",
+            "updated_at",
+            "customer_name",
+            "customer_email",
+            "customer_phone",
+            "payment_status",
+            "delivery_assignment_status",
+            "cancel_request_status",
+            "shipping_address_summary",
+        ]
+
+    def get_customer_name(self, obj):
+        user = obj.user
+        if user.first_name or user.last_name:
+            return f"{user.first_name} {user.last_name}".strip()
+        return user.email or user.phone_number
+
+    def get_shipping_address_summary(self, obj):
+        if obj.shipping_address:
+            return {
+                "emirate": obj.shipping_address.emirate,
+                "area": obj.shipping_address.area,
+                "street_address": obj.shipping_address.street_address,
+                "building_name": obj.shipping_address.building_name,
+                "flat_villa_number": obj.shipping_address.flat_villa_number,
+            }
+
+        if isinstance(obj.shipping_address_snapshot, dict):
+            return {
+                "emirate": obj.shipping_address_snapshot.get("emirate"),
+                "area": obj.shipping_address_snapshot.get("area"),
+                "street_address": obj.shipping_address_snapshot.get("street_address") or obj.shipping_address_snapshot.get("street"),
+                "building_name": obj.shipping_address_snapshot.get("building_name"),
+                "flat_villa_number": obj.shipping_address_snapshot.get("flat_villa_number") or obj.shipping_address_snapshot.get("flat_villa"),
+            }
+
+        return None
 
 
 class AdminPaymentSerializer(serializers.ModelSerializer):

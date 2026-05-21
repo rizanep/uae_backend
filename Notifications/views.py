@@ -18,7 +18,9 @@ from .serializers import (
     FCMDeviceSerializer,
 )
 from .tasks import send_contact_reply_email
-from .push_service import send_push_to_all_users, send_push_to_tokens
+from .tasks import send_broadcast_push_task, send_broadcast_email_task, send_broadcast_sms_task, send_broadcast_whatsapp_task
+from .services import UnifiedNotificationService
+from django.conf import settings
 
 class NotificationViewSet(
     mixins.ListModelMixin,
@@ -67,7 +69,7 @@ class NotificationViewSet(
         notification.is_read = True
         notification.save()
         return Response({"status": "success"}, status=status.HTTP_200_OK)
-
+    
 
 class NotificationTemplateViewSet(viewsets.ModelViewSet):
     queryset = NotificationTemplate.objects.filter(deleted_at__isnull=True)
@@ -82,7 +84,7 @@ class BroadcastViewSet(viewsets.ModelViewSet):
     serializer_class = BroadcastSerializer
     permission_classes = [IsAdmin]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = "__all__"
+    filterset_fields = ["subject", "message", "template", "type", "send_to_all", "is_sent", "sent_at", "created_at"]
 
     @action(detail=True, methods=["post"])
     def send(self, request, pk=None):
@@ -121,27 +123,18 @@ class BroadcastViewSet(viewsets.ModelViewSet):
             Notification.objects.bulk_create(notifications, batch_size=1000)
             sent_count = len(notifications)
         elif notif_type == NotificationType.PUSH:
-            # Send real FCM push notifications
-            from .models import FCMDevice
-            recipient_id_list = list(recipient_ids)
-            tokens = list(
-                FCMDevice.objects.filter(
-                    user_id__in=recipient_id_list, is_active=True
-                ).values_list("registration_token", flat=True)
-            )
-            if tokens:
-                result = send_push_to_tokens(tokens, subject, message)
-                sent_count = result["success_count"]
-            else:
-                sent_count = 0
-        else:
-            # For other types (EMAIL, SMS), still mock
-            sent_count = len(list(recipient_ids))
-            for user_id in recipient_ids:
-                if notif_type == NotificationType.EMAIL:
-                    print(f"Mock Sending Email to user {user_id}: {subject}")
-                elif notif_type == NotificationType.SMS:
-                    print(f"Mock Sending SMS to user {user_id}: {message}")
+            # Queue async push delivery to avoid request-time bottlenecks.
+            send_broadcast_push_task.delay(broadcast.id)
+            sent_count = recipient_ids.count()
+        elif notif_type == NotificationType.EMAIL:
+            send_broadcast_email_task.delay(broadcast.id)
+            sent_count = recipient_ids.count()
+        elif notif_type == NotificationType.SMS:
+            send_broadcast_sms_task.delay(broadcast.id)
+            sent_count = recipient_ids.count()
+        elif notif_type == NotificationType.WHATSAPP:
+            send_broadcast_whatsapp_task.delay(broadcast.id)
+            sent_count = recipient_ids.count()
 
         broadcast.is_sent = True
         broadcast.sent_at = timezone.now()

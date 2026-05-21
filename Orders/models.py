@@ -139,6 +139,12 @@ class Order(models.Model):
         related_name="orders",
         verbose_name=_("shipping address"),
     )
+    shipping_address_snapshot = models.JSONField(
+        _("shipping address snapshot"),
+        null=True,
+        blank=True,
+        help_text=_("Frozen copy of shipping address to preserve order history if address is deleted."),
+    )
     total_amount = models.DecimalField(_("total amount"), max_digits=12, decimal_places=2)
     tip_amount = models.DecimalField(_("tip amount"), max_digits=10, decimal_places=2, default=Decimal("0.00"))
     coupon = models.ForeignKey(
@@ -176,10 +182,44 @@ class Order(models.Model):
     def __str__(self):
         return f"Order #{self.id} by {self.user}"
 
+    @staticmethod
+    def build_shipping_address_snapshot(address):
+        if not address:
+            return None
+
+        return {
+            "id": str(address.id) if address.id is not None else None,
+            "user": address.user_id,
+            "label": address.label,
+            "address_type": address.address_type,
+            "is_default": address.is_default,
+            "full_name": address.full_name,
+            "phone_number": address.phone_number,
+            "building_name": address.building_name,
+            "flat_villa_number": address.flat_villa_number,
+            "street_address": address.street_address,
+            "area": address.area,
+            "city": address.city,
+            "emirate": address.emirate,
+            "postal_code": address.postal_code,
+            "country": address.country,
+            "latitude": str(address.latitude) if address.latitude is not None else None,
+            "longitude": str(address.longitude) if address.longitude is not None else None,
+            "created_at": address.created_at.isoformat() if address.created_at else None,
+            "updated_at": address.updated_at.isoformat() if address.updated_at else None,
+        }
+
+    def save(self, *args, **kwargs):
+        # Backward-compatible safety net for non-checkout order creation paths.
+        if self.shipping_address_id and not self.shipping_address_snapshot:
+            self.shipping_address_snapshot = self.build_shipping_address_snapshot(self.shipping_address)
+        super().save(*args, **kwargs)
+
 
 class OrderItem(models.Model):
     """
     Individual items within an order.
+    Tracks product details, quantity, price, and preparation specifications.
     """
     order = models.ForeignKey(
         Order,
@@ -198,6 +238,36 @@ class OrderItem(models.Model):
     quantity = models.PositiveIntegerField(_("quantity"))
     price = models.DecimalField(_("price"), max_digits=10, decimal_places=2)
 
+    # Preparation Specification Fields
+    preparation_specification = models.ForeignKey(
+        'Products.ProductPreparationSpecification',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="order_items",
+        verbose_name=_("preparation specification"),
+        help_text=_("Selected preparation method for this product"),
+    )
+    preparation_specification_name = models.CharField(
+        _("preparation specification name"),
+        max_length=255,
+        blank=True,
+        help_text=_("Snapshot of the preparation spec name at order time"),
+    )
+    preparation_extra_price = models.DecimalField(
+        _("preparation extra price"),
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        help_text=_("Extra price for this preparation method at order time"),
+    )
+    preparation_instructions = models.TextField(
+        _("preparation instructions"),
+        blank=True,
+        null=True,
+        help_text=_("Additional custom instructions provided by the user"),
+    )
+
     class Meta:
         verbose_name = _("Order Item")
         verbose_name_plural = _("Order Items")
@@ -207,6 +277,58 @@ class OrderItem(models.Model):
         if self.price is None or self.quantity is None:
             return Decimal("0.00")
         return self.price * self.quantity
+
+    @property
+    def total_with_preparation(self):
+        """Calculate total including preparation extra price."""
+        base_total = self.subtotal
+        extra_cost = (self.preparation_extra_price or Decimal("0.00")) * self.quantity
+        return base_total + extra_cost
+    
+    def clean(self):
+        """Validate preparation specification if product requires it."""
+        from django.core.exceptions import ValidationError
+        from Products.models import ProductPreparationSpecification
+        
+        # Check if product has active preparation specs
+        if self.product:
+            has_active_specs = ProductPreparationSpecification.objects.filter(
+                product=self.product,
+                is_active=True
+            ).exists()
+            
+            if has_active_specs and not self.preparation_specification:
+                raise ValidationError({
+                    'preparation_specification': 'Preparation specification is required for this product.'
+                })
+            
+            # Validate spec belongs to this product
+            if self.preparation_specification and self.preparation_specification.product != self.product:
+                raise ValidationError({
+                    'preparation_specification': 'Preparation specification does not match this product.'
+                })
+            
+            # Verify spec is active
+            if self.preparation_specification and not self.preparation_specification.is_active:
+                raise ValidationError({
+                    'preparation_specification': 'This preparation option is no longer available.'
+                })
+    
+    def save(self, *args, **kwargs):
+        """Save snapshots of preparation data at order time."""
+        self.full_clean()
+        if self.preparation_specification:
+            self.preparation_specification_name = self.preparation_specification.name
+            self.preparation_extra_price = self.preparation_specification.extra_price
+        else:
+            self.preparation_specification_name = ""
+            self.preparation_extra_price = Decimal("0.00")
+        
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        prep_str = f" ({self.preparation_specification_name})" if self.preparation_specification_name else ""
+        return f"Order #{self.order.id} - {self.product_name} x{self.quantity}{prep_str}"
 
 
 class OrderStatusHistory(models.Model):

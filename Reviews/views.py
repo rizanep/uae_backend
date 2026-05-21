@@ -100,8 +100,8 @@ class ReviewViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            review = Review.objects.get(
-                user=request.user, 
+            review = Review.objects.select_related('user', 'product').get(
+                user=request.user,
                 product_id=product_id
             )
             serializer = self.get_serializer(review)
@@ -134,18 +134,18 @@ class ReviewViewSet(viewsets.ModelViewSet):
         Get a summary of review counts.
         Returns: total reviews, average rating, visible, hidden.
         """
-        from django.db.models import Avg
-        
-        reviews_qs = Review.objects.filter(deleted_at__isnull=True)
-        total_reviews = reviews_qs.count()
-        
-        avg_rating = reviews_qs.aggregate(avg=Avg("rating"))["avg"] or 0
-        visible = reviews_qs.filter(is_visible=True).count()
-        hidden = reviews_qs.filter(is_visible=False).count()
-        
+        from django.db.models import Avg, Count, Q
+
+        review_counts = Review.objects.filter(deleted_at__isnull=True).aggregate(
+            total=Count('id'),
+            visible=Count('id', filter=Q(is_visible=True)),
+            hidden=Count('id', filter=Q(is_visible=False)),
+            avg_rating=Avg('rating'),
+        )
+
         return Response({
-            "total_reviews": total_reviews,
-            "avg_rating": float(avg_rating),
-            "visible": visible,
-            "hidden": hidden
+            "total_reviews": review_counts['total'],
+            "avg_rating": float(review_counts['avg_rating'] or 0),
+            "visible": review_counts['visible'],
+            "hidden": review_counts['hidden'],
         })

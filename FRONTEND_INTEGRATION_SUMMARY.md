@@ -54,7 +54,7 @@ npm install vue3-google-login
 
 ```javascript
 // React example (see code examples file for others)
-<GoogleOAuthProvider clientId="850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleusercontent.com">
+<GoogleOAuthProvider clientId="470304276733-kt1v78349g2kecepe4dpl1371jvdpb6k.apps.googleusercontent.com">
   <App />
 </GoogleOAuthProvider>
 ```

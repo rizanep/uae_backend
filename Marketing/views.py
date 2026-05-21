@@ -37,8 +37,8 @@ PROMOTIONAL_TEMPLATES = {
         'zh': '全场订单免运费',
     },
     'delivery_time': {
-        'en': 'Purchase before {cutoff} to get delivery between {start} - {end}',
-        'ar': 'اشترِ قبل {cutoff} للحصول على توصيل بين {start} - {end}',
+        'en': 'Order before {cutoff} to get delivery between {start} - {end}',
+        'ar': 'اطلب قبل {cutoff} للحصول على توصيل بين {start} - {end}',
         'zh': '请在 {cutoff} 前下单，配送时间为 {start} - {end}',
     },
     'delivery_time_tomorrow': {
@@ -227,21 +227,20 @@ class AdminCouponViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def stats(self, request):
         """Get coupon statistics and usage insights."""
-        coupons = self.get_queryset()
-        
-        total_coupons = coupons.count()
-        active_coupons = coupons.filter(is_active=True, deleted_at__isnull=True).count()
-        referral_coupons = coupons.filter(is_referral_reward=True).count()
-        first_order_coupons = coupons.filter(is_first_order_reward=True).count()
-        
-        total_redeemed = coupons.aggregate(models.Sum('used_count'))['used_count__sum'] or 0
-        
+        stats = self.get_queryset().aggregate(
+            total_coupons=models.Count('id'),
+            active_coupons=models.Count('id', filter=models.Q(is_active=True, deleted_at__isnull=True)),
+            referral_coupons=models.Count('id', filter=models.Q(is_referral_reward=True)),
+            first_order_coupons=models.Count('id', filter=models.Q(is_first_order_reward=True)),
+            total_redeemed=models.Sum('used_count'),
+        )
+
         return Response({
-            "total_coupons": total_coupons,
-            "active_coupons": active_coupons,
-            "referral_coupons": referral_coupons,
-            "first_order_coupons": first_order_coupons,
-            "total_redeemed": total_redeemed,
+            "total_coupons": stats['total_coupons'],
+            "active_coupons": stats['active_coupons'],
+            "referral_coupons": stats['referral_coupons'],
+            "first_order_coupons": stats['first_order_coupons'],
+            "total_redeemed": stats['total_redeemed'] or 0,
         }, status=status.HTTP_200_OK)
 
 
@@ -440,16 +439,14 @@ class PromotionalContentViewSet(viewsets.ViewSet):
         else:
             # If no slots available today, show tomorrow's first slot
             tomorrow = today + datetime.timedelta(days=1)
-            tomorrow_slots = DeliveryTimeSlot.objects.filter(is_active=True).order_by('sort_order', 'start_time')
-
-            # Get overrides for tomorrow
+            # Reuse already-fetched all_active_slots — no extra DB query
             tomorrow_overrides = {
                 o.slot_id: o.is_active
                 for o in DeliverySlotOverride.objects.filter(date=tomorrow)
             }
 
             tomorrow_slot = None
-            for slot in tomorrow_slots:
+            for slot in all_active_slots:
                 if slot.id in tomorrow_overrides:
                     if not tomorrow_overrides[slot.id]:
                         continue

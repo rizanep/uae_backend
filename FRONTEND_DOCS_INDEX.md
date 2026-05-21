@@ -70,7 +70,7 @@ Complete guide to implementing Google OAuth login in your frontend application.
 
 ### Google OAuth Credentials
 ```
-Client ID:    850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleusercontent.com
+Client ID:    470304276733-kt1v78349g2kecepe4dpl1371jvdpb6k.apps.googleusercontent.com
 Redirect URI: http://localhost:8000/api/users/google/callback/
 ```
 

@@ -1,13 +1,20 @@
 """
 Test FCM push notification with a specific token.
-Run: python manage.py shell < test_fcm_push.py
+Run: python test_fcm_push.py
 """
+import os
+import sys
 import django
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
 django.setup()
 
 from Notifications.push_service import send_push_to_tokens
 
-token = "c0Mv9-yCQrKZkCj0y6tU5L:APA91bG3r16LBhpk2zVpJhaSRJyx97kJiWyccIHYEChMyeq5-JgD_DIZpvAyP3qDWd8a0BanLLFbtKGF7irL6uV9A1MzCxriJ20PZWvKYIv523Hn7TaTuUE"
+token = "fxuNlf3mQGGjv4exwfR0pu:APA91bEAuN1jUBvrJmmhKD85onKjgz0mA2b6AjeeOLlRrBfFwTmfl0cWP7rH3gURwKxOZdXUP6LUbq8gMdGDEx609JS-hr2VshR9J_TJyeq4kFlIVC_NDFY"
 
 print("Sending test push notification...")
 result = send_push_to_tokens(

@@ -8,6 +8,10 @@ from twilio.base.exceptions import TwilioRestException
 @shared_task
 def send_email_task(subject, message, recipient_list, from_email=None, html_message=None):
     if not getattr(settings, "USE_REAL_SMTP", False):
+        print(
+            "[EMAIL CONSOLE MODE] "
+            f"subject={subject!r} recipients={recipient_list} html={bool(html_message)}"
+        )
         return 0
     from_email = from_email or settings.DEFAULT_FROM_EMAIL
     if not isinstance(recipient_list, (list, tuple)):

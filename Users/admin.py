@@ -4,7 +4,7 @@ from .models import User, OTPToken, GoogleOAuthToken, UserProfile, UserAddress, 
 
 @admin.register(User)
 class UserAdmin(admin.ModelAdmin):
-    list_display = ('id', 'email', 'phone_number', 'first_name', 'last_name', 'role', 'is_active', 'is_email_verified', 'is_phone_verified')
+    list_display = ('id', 'email', 'phone_number', 'first_name', 'last_name', 'role', 'nationality', 'is_active', 'is_email_verified', 'is_phone_verified')
     search_fields = ('email', 'phone_number', 'first_name', 'last_name')
     list_filter = ('role', 'is_active', 'is_email_verified', 'is_phone_verified')
     readonly_fields = ('created_at', 'updated_at', 'deleted_at', 'last_login_at')
@@ -14,6 +14,7 @@ class UserAdmin(admin.ModelAdmin):
         'first_name',
         'last_name',
         'role',
+        'nationality',
         'is_active',
         'is_staff',
         'is_superuser',
