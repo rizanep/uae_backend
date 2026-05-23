@@ -1,6 +1,7 @@
 from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
+from django.core.exceptions import ValidationError
 from rest_framework.test import APITestCase
 from rest_framework import status
 from decimal import Decimal
@@ -79,6 +80,108 @@ class OrderSignalNotificationTests(TestCase):
         )
 
         mock_receipt_delay.assert_called_once_with(payment.id)
+
+
+class OrderCancellationTestCase(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="canceluser@example.com",
+            password="pass12345",
+            phone_number="+971500000099",
+        )
+        self.admin = User.objects.create_user(
+            email="canceladmin@example.com",
+            password="adminpass123",
+            role="admin",
+            is_staff=True,
+            is_superuser=True,
+        )
+        self.address = UserAddress.objects.create(
+            user=self.user,
+            label="Home",
+            address_type="home",
+            full_name="Cancel User",
+            phone_number="+971500000099",
+            street_address="Street 1",
+            city="Dubai",
+            emirate="dubai",
+        )
+        self.category = Category.objects.create(name="Cancel Category", slug="cancel-category")
+        self.product = Product.objects.create(
+            name="Cancel Product",
+            description="Test",
+            price=Decimal("50.00"),
+            stock=5,
+            category=self.category,
+            is_available=True,
+        )
+        self.order = Order.objects.create(
+            user=self.user,
+            shipping_address=self.address,
+            total_amount=Decimal("50.00"),
+            status=Order.OrderStatus.PENDING,
+        )
+        OrderItem.objects.create(
+            order=self.order,
+            product=self.product,
+            product_name=self.product.name,
+            quantity=2,
+            price=self.product.price,
+        )
+        # Simulate stock reduced at checkout (5 - 2 = 3)
+        self.product.stock = 3
+        self.product.save(update_fields=["stock"])
+
+    def test_cancel_order_restock(self):
+        self.client.force_authenticate(user=self.user)
+        url = reverse("order-cancel-order", args=[self.order.id])
+        response = self.client.post(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.order.refresh_from_db()
+        self.product.refresh_from_db()
+        self.assertEqual(self.order.status, Order.OrderStatus.CANCELLED)
+        self.assertEqual(self.product.stock, 5)
+
+    def test_admin_cancel_restock(self):
+        self.order.status = Order.OrderStatus.PAID
+        self.order.save(update_fields=["status"])
+
+        self.client.force_authenticate(user=self.admin)
+        url = reverse("order-admin-update-status", args=[self.order.id])
+        response = self.client.post(
+            url,
+            {"status": Order.OrderStatus.CANCELLED},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock, 5)
+
+    def test_cannot_change_status_from_cancelled(self):
+        self.order.status = Order.OrderStatus.CANCELLED
+        self.order.save(update_fields=["status"])
+
+        self.client.force_authenticate(user=self.admin)
+        url = reverse("order-admin-update-status", args=[self.order.id])
+        response = self.client.post(
+            url,
+            {"status": Order.OrderStatus.PAID},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.OrderStatus.CANCELLED)
+
+    def test_model_save_blocks_uncancel(self):
+        self.order.status = Order.OrderStatus.CANCELLED
+        self.order.save(update_fields=["status"])
+
+        self.order.status = Order.OrderStatus.PAID
+        with self.assertRaises(ValidationError):
+            self.order.save()
 
 
 class DashboardAnalyticsTestCase(APITestCase):

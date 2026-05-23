@@ -176,6 +176,37 @@ class Order(models.Model):
     def __str__(self):
         return f"Order #{self.id} by {self.user}"
 
+    def restock_items(self):
+        """Restore product stock for all line items that still reference a product."""
+        for item in self.items.select_related("product").all():
+            if item.product_id:
+                product = item.product
+                product.stock += item.quantity
+                product.save(update_fields=["stock"])
+
+    def can_transition_to(self, new_status):
+        """Cancelled orders cannot move back to any other status."""
+        if (
+            self.status == self.OrderStatus.CANCELLED
+            and new_status != self.OrderStatus.CANCELLED
+        ):
+            return False
+        return True
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            old_status = (
+                Order.objects.filter(pk=self.pk)
+                .values_list("status", flat=True)
+                .first()
+            )
+            if (
+                old_status == self.OrderStatus.CANCELLED
+                and self.status != self.OrderStatus.CANCELLED
+            ):
+                raise ValidationError(_("Cannot change status of a cancelled order."))
+        super().save(*args, **kwargs)
+
 
 class OrderItem(models.Model):
     """

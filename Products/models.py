@@ -30,7 +30,7 @@ class Category(SoftDeleteModel):
     class Meta:
         verbose_name = _("Category")
         verbose_name_plural = _("Categories")
-        ordering = ["name"]
+        ordering = ["id"]
 
     def __str__(self):
         return self.name
