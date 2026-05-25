@@ -101,12 +101,25 @@ class ZiinaPaymentService:
         Create a refund for a Ziina payment intent.
         amount_fils: amount in fils to refund (None = full refund via the original amount).
         """
+        normalized_amount = None
+        if amount_fils not in (None, ""):
+            try:
+                normalized_amount = int(amount_fils)
+            except (TypeError, ValueError):
+                raise ValueError("amount_fils must be an integer value in fils")
+
+            if normalized_amount <= 0:
+                raise ValueError("amount_fils must be greater than 0")
+
         payload = {
+            # Ziina refund API validates `id` as UUID for the payment intent to refund.
+            "id": payment_intent_id,
+            # Keep this key for compatibility if older API variants still accept it.
             "payment_intent_id": payment_intent_id,
-            "currency_code": currency_code,
+            "currency_code": (currency_code or "AED").upper(),
         }
-        if amount_fils is not None:
-            payload["amount"] = amount_fils
+        if normalized_amount is not None:
+            payload["amount"] = normalized_amount
 
         logger.info(f"Creating Ziina refund for payment intent {payment_intent_id}")
 
@@ -123,8 +136,13 @@ class ZiinaPaymentService:
             logger.info(f"Ziina refund created: {data.get('id')} for payment intent {payment_intent_id}")
             return data
         except requests.exceptions.RequestException as e:
-            logger.error(f"Ziina create_refund failed for {payment_intent_id}: {e}")
-            raise
+            response_text = ""
+            if getattr(e, "response", None) is not None:
+                response_text = e.response.text
+            logger.error(
+                f"Ziina create_refund failed for {payment_intent_id}: {e} | response={response_text}"
+            )
+            raise RuntimeError(f"Ziina refund request failed: {response_text or str(e)}") from e
 
     @staticmethod
     def get_refund(refund_id):

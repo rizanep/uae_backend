@@ -71,10 +71,48 @@ def send_push_to_tokens(tokens, title, body, data=None, image=None):
     # Ensure all data values are strings (FCM requirement)
     if data:
         data = {k: str(v) for k, v in data.items()}
+    else:
+        data = {}
+
+    # Keep image URL in data for clients that render local notifications manually.
+    if image:
+        data.setdefault("image", str(image))
+
+    android = messaging.AndroidConfig(
+        priority="high",
+        notification=messaging.AndroidNotification(
+            title=title,
+            body=body,
+            image=image,
+            channel_id="default",
+        ),
+    )
+
+    # iOS requires mutable-content for rich media processing by the app extension.
+    apns = messaging.APNSConfig(
+        payload=messaging.APNSPayload(
+            aps=messaging.Aps(
+                mutable_content=True,
+                alert=messaging.ApsAlert(title=title, body=body),
+            )
+        ),
+        fcm_options=messaging.APNSFCMOptions(image=image) if image else None,
+    )
+
+    webpush = messaging.WebpushConfig(
+        notification=messaging.WebpushNotification(
+            title=title,
+            body=body,
+            image=image,
+        )
+    )
 
     message = messaging.MulticastMessage(
         notification=notification,
         data=data,
+        android=android,
+        apns=apns,
+        webpush=webpush,
         tokens=tokens,
     )
 

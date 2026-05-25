@@ -1,10 +1,12 @@
 from django.db.models.signals import post_save, pre_save
+from django.db import transaction
 from django.dispatch import receiver
 from .models import Order, OrderStatusHistory, Payment, Receipt
 from Notifications.models import Notification
 from Notifications.tasks import (
     send_order_status_multichannel_notification,
     send_payment_receipt_multichannel_notification,
+    send_order_pending_reminder_whatsapp,
 )
 from django.contrib.auth import get_user_model
 
@@ -76,8 +78,14 @@ def send_order_status_notification(sender, instance, created, **kwargs):
         if admin_notifications:
             Notification.objects.bulk_create(admin_notifications)
 
-        # New orders start as pending and should prompt payment immediately.
-        send_order_status_multichannel_notification.delay(instance.id)
+        # On order creation, do not send immediate pending-status broadcast.
+        # Only send the delayed reminder if still pending.
+        transaction.on_commit(
+            lambda order_id=instance.id: send_order_pending_reminder_whatsapp.apply_async(
+                args=[order_id],
+                countdown=120,
+            )
+        )
 
     else:
         old_status = getattr(instance, '_old_status', None)
@@ -89,7 +97,9 @@ def send_order_status_notification(sender, instance, created, **kwargs):
                 action_url=f"/orders/{instance.id}"
             )
 
-            send_order_status_multichannel_notification.delay(instance.id)
+            transaction.on_commit(
+                lambda order_id=instance.id: send_order_status_multichannel_notification.delay(order_id)
+            )
 
 @receiver(post_save, sender=Payment)
 def handle_payment_success(sender, instance, **kwargs):
@@ -116,4 +126,6 @@ def handle_payment_success(sender, instance, **kwargs):
 
         # Notify payment receipt after ensuring receipt exists.
         if created_receipt or hasattr(instance, "receipt"):
-            send_payment_receipt_multichannel_notification.delay(instance.id)
+            transaction.on_commit(
+                lambda payment_id=instance.id: send_payment_receipt_multichannel_notification.delay(payment_id)
+            )

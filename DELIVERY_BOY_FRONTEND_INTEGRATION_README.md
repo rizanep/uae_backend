@@ -169,7 +169,7 @@ Endpoint:
 - `GET /api/orders/available_orders/`
 
 Access:
-- Delivery boy only.
+- Delivery boy only..
 
 Returns unassigned orders filtered by:
 - emirate in delivery boy assigned emirates

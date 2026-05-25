@@ -12,6 +12,7 @@ from django.utils import timezone
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.db import IntegrityError, transaction
+from django.db.models import Count, Q, Prefetch
 import json
 import requests
 import logging
@@ -101,7 +102,10 @@ class UserViewSet(viewsets.ModelViewSet):
     def retrieve(self, request, *args, **kwargs):
         """Retrieve a specific user; show delivery-boy-safe view for delivery boys."""
         instance = self.get_object()
-        serializer_class = UserSerializer if instance.role == 'delivery_boy' else self.get_serializer_class()
+        if request.user.is_authenticated and request.user.role == 'admin':
+            serializer_class = UserAdminSerializer
+        else:
+            serializer_class = UserSerializer if instance.role == 'delivery_boy' else self.get_serializer_class()
         return Response(serializer_class(instance).data)
     
     def update(self, request, *args, **kwargs):
@@ -216,7 +220,11 @@ class UserViewSet(viewsets.ModelViewSet):
         else:
             queryset = User.objects.filter(deleted_at__isnull=True)
 
-        queryset = queryset.select_related('profile', 'delivery_profile').prefetch_related('addresses', 'orders')
+        from Orders.models import Order as _Order
+        queryset = queryset.select_related('profile', 'delivery_profile').prefetch_related(
+            'addresses',
+            Prefetch('orders', queryset=_Order.objects.only('id', 'status', 'created_at').order_by('-created_at')),
+        )
 
         if role:
             queryset = queryset.filter(role=role)
@@ -244,7 +252,11 @@ class UserViewSet(viewsets.ModelViewSet):
         if not include_deleted:
             queryset = queryset.filter(deleted_at__isnull=True)
 
-        queryset = queryset.select_related('profile', 'delivery_profile').prefetch_related('addresses', 'orders')
+        from Orders.models import Order as _Order
+        queryset = queryset.select_related('profile', 'delivery_profile').prefetch_related(
+            'addresses',
+            Prefetch('orders', queryset=_Order.objects.only('id', 'status', 'created_at').order_by('-created_at')),
+        )
         queryset = self.filter_queryset(queryset)
         serializer = UserSerializer(queryset, many=True)
         return Response(serializer.data)
@@ -316,18 +328,18 @@ class UserViewSet(viewsets.ModelViewSet):
         Get a summary of user counts by status.
         Returns: total users, active, blocked/inactive, admins.
         """
-        users_qs = User.objects.filter(deleted_at__isnull=True)
-        total_users = users_qs.count()
-        
-        active = users_qs.filter(is_active=True).count()
-        blocked = users_qs.filter(is_active=False).count()
-        admins = users_qs.filter(role='admin').count()
-        
+        user_counts = User.objects.filter(deleted_at__isnull=True).aggregate(
+            total_users=Count('id'),
+            active=Count('id', filter=Q(is_active=True)),
+            blocked=Count('id', filter=Q(is_active=False)),
+            admins=Count('id', filter=Q(role='admin')),
+        )
+
         return Response({
-            "total_users": total_users,
-            "active": active,
-            "blocked": blocked,
-            "admins": admins
+            "total_users": user_counts['total_users'],
+            "active": user_counts['active'],
+            "blocked": user_counts['blocked'],
+            "admins": user_counts['admins'],
         })
 
     @action(detail=False, methods=['post'])
@@ -484,13 +496,10 @@ class LoginView(TokenObtainPairView):
                 )
             
             # Handle referral code after successful login
+            # `user` is already fetched above when email was provided; only do a DB hit for phone-only login
             if referral_code:
-                # Try to get user by email first, then by phone
-                user = None
-                if email:
-                    user = User.objects.filter(email=email).first()
-                elif phone:
-                    user = User.objects.filter(phone_number=phone).first()
+                if not email:
+                    user = User.objects.filter(phone_number=phone).first() if phone else None
                 
                 if user:
                     try:
@@ -530,8 +539,9 @@ class RefreshView(TokenRefreshView):
     def post(self, request, *args, **kwargs):
         # Check if refresh token is in cookies
         if 'refresh' not in request.data and COOKIE_REFRESH_NAME in request.COOKIES:
-            request.data = request.data.copy()
-            request.data['refresh'] = request.COOKIES.get(COOKIE_REFRESH_NAME)
+            data = request.data.copy()
+            data['refresh'] = request.COOKIES.get(COOKIE_REFRESH_NAME)
+            request._full_data = data
         
         # Check user active status from refresh token
         refresh_token = request.data.get('refresh')
@@ -851,7 +861,7 @@ class OTPRequestView(APIView):
     def post(self, request):
         serializer = OTPRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        otp_platform = serializer.validated_data.get('otp_platform', 'sms')
+        otp_platform = serializer.validated_data.get('otp_platform', 'whatsapp')  # Default to WhatsApp if not specified
         otp = serializer.save()
         
         if not otp.user.is_active:

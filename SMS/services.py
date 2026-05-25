@@ -170,6 +170,19 @@ class MSG91SMSService:
         Returns:
             Tuple of (success, response_data with message_id)
         """
+
+        if not getattr(settings, "USE_REAL_MSG91_SMS", False):
+            console_payload = {
+                "template_id": template_id,
+                "recipient_number": recipient_number,
+                "variables": variables or {},
+                "short_url": short_url,
+                "short_url_expiry": short_url_expiry,
+                "realtime_response": realtime_response,
+            }
+            print(f"[SMS CONSOLE MODE] {json.dumps(console_payload, default=str)}")
+            logger.info("SMS disabled; payload printed to terminal")
+            return True, {"status": "skipped", "reason": "USE_REAL_MSG91_SMS is false", "payload": console_payload}
         
         # Build recipient object
         recipient = {
@@ -227,6 +240,19 @@ class MSG91SMSService:
         Returns:
             Tuple of (success, response_data)
         """
+
+        if not getattr(settings, "USE_REAL_MSG91_SMS", False):
+            console_payload = {
+                "template_id": template_id,
+                "recipient_numbers": recipient_numbers,
+                "variables_list": variables_list or [],
+                "short_url": short_url,
+                "short_url_expiry": short_url_expiry,
+                "realtime_response": realtime_response,
+            }
+            print(f"[SMS CONSOLE MODE] {json.dumps(console_payload, default=str)}")
+            logger.info("Bulk SMS disabled; payload printed to terminal")
+            return True, {"status": "skipped", "reason": "USE_REAL_MSG91_SMS is false", "payload": console_payload}
         
         recipients = []
         

@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.db.models import Avg
-from .models import Category, Product, ProductImage, ProductVideo, ProductDeliveryTier, ProductDiscountTier
+from .models import Category, Product, ProductImage, ProductVideo, ProductDeliveryTier, ProductDiscountTier, ProductPreparationSpecification, ProductNotification
+
 
 class ProductDeliveryTierSerializer(serializers.ModelSerializer):
     class Meta:
@@ -41,12 +42,33 @@ class ProductVideoSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at"]
 
 
+class ProductPreparationSpecificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductPreparationSpecification
+        fields = ["id", "name", "description", "image", "extra_price", "sort_order"]
+        read_only_fields = fields
+
+
+class ProductPreparationSpecificationAdminSerializer(serializers.ModelSerializer):
+    """Writable serializer for admin use — create/update/delete specs."""
+
+    class Meta:
+        model = ProductPreparationSpecification
+        fields = [
+            "id", "product", "name", "description", "image",
+            "extra_price", "sort_order", "is_active",
+            "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
 class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     images = ProductImageSerializer(many=True, read_only=True)
     videos = ProductVideoSerializer(many=True, read_only=True)
     delivery_tiers = ProductDeliveryTierSerializer(many=True, read_only=True)
     discount_tiers = ProductDiscountTierSerializer(many=True, read_only=True)
+    preparation_specifications = serializers.SerializerMethodField()
     final_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     average_rating = serializers.SerializerMethodField()
     total_reviews = serializers.SerializerMethodField()
@@ -76,6 +98,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "discount_tiers",
             "average_rating",
             "total_reviews",
+            "preparation_specifications",
             "created_at",
             "updated_at",
         ]
@@ -107,4 +130,21 @@ class ProductSerializer(serializers.ModelSerializer):
             return sum(1 for r in prefetched_reviews if getattr(r, "is_visible", True))
 
         return obj.reviews.filter(is_visible=True).count()
+
+    def get_preparation_specifications(self, obj):
+        specs = obj.preparation_specifications.filter(is_active=True).order_by("sort_order", "name")
+        return ProductPreparationSpecificationSerializer(specs, many=True, context=self.context).data
+
+
+class ProductNotificationSerializer(serializers.ModelSerializer):
+    """Serializer for displaying notifying users (admin only)."""
+    user_id = serializers.IntegerField(source="user.id", read_only=True)
+    user_name = serializers.CharField(source="user.first_name", read_only=True)
+    user_email = serializers.CharField(source="user.email", read_only=True)
+    user_phone = serializers.CharField(source="user.phone_number", read_only=True)
+    
+    class Meta:
+        model = ProductNotification
+        fields = ["id", "user_id", "user_name", "user_email", "user_phone", "created_at", "notified"]
+        read_only_fields = fields
 

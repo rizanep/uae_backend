@@ -1,7 +1,8 @@
 from django.db import models
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
-from Products.models import Product
+from django.core.exceptions import ValidationError
+from Products.models import Product, ProductPreparationSpecification
 from decimal import Decimal
 
 class Cart(models.Model):
@@ -51,6 +52,19 @@ class CartItem(models.Model):
         related_name="cart_items",
         verbose_name=_("product"),
     )
+    preparation_specification = models.ForeignKey(
+        ProductPreparationSpecification,
+        on_delete=models.PROTECT,
+        related_name="cart_items",
+        verbose_name=_("preparation specification"),
+        null=True,
+        blank=True,
+    )
+    preparation_instructions = models.TextField(
+        _("preparation instructions"),
+        blank=True,
+        help_text=_("Optional customer instructions for the selected preparation."),
+    )
     quantity = models.PositiveIntegerField(_("quantity"), default=1)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -58,26 +72,56 @@ class CartItem(models.Model):
     class Meta:
         verbose_name = _("Cart Item")
         verbose_name_plural = _("Cart Items")
-        unique_together = ("cart", "product")
+        indexes = [
+            models.Index(fields=["cart", "product"]),
+            models.Index(fields=["cart", "preparation_specification"]),
+        ]
 
     def __str__(self):
-        return f"{self.quantity} x {self.product.name} in {self.cart.user}'s cart"
+        prep_name = self.preparation_specification.name if self.preparation_specification else "default"
+        return f"{self.quantity} x {self.product.name} ({prep_name}) in {self.cart.user}'s cart"
+
+    def clean(self):
+        if self.preparation_specification:
+            if self.preparation_specification.product_id != self.product_id:
+                raise ValidationError({
+                    "preparation_specification": _("Selected preparation specification does not belong to this product.")
+                })
+            if not self.preparation_specification.is_active:
+                raise ValidationError({
+                    "preparation_specification": _("Selected preparation specification is not available.")
+                })
+        elif self.product_id and self.product.preparation_specifications.filter(is_active=True).exists():
+            raise ValidationError({
+                "preparation_specification": _("A preparation specification is required for this product.")
+            })
+
+    def save(self, *args, **kwargs):
+        self.preparation_instructions = (self.preparation_instructions or "").strip()
+        self.full_clean()
+        super().save(*args, **kwargs)
 
     @property
-    def unit_price(self):
-        """
-        Calculate unit price considering quantity-based discounts.
-        """
+    def base_unit_price(self):
+        """Product price after quantity discounts, before preparation surcharge."""
         price = self.product.final_price
-        # Check for discount tiers
-        # We access related manager directly. To optimize, viewsets should prefetch 'product__discount_tiers'
         tier = self.product.discount_tiers.filter(min_quantity__lte=self.quantity).order_by('-min_quantity').first()
-        
+
         if tier:
             discount_amount = (price * tier.discount_percentage) / Decimal("100")
             price -= discount_amount
-            
+
         return price
+
+    @property
+    def preparation_extra_price(self):
+        if self.preparation_specification:
+            return self.preparation_specification.extra_price
+        return Decimal("0.00")
+
+    @property
+    def unit_price(self):
+        return self.base_unit_price + self.preparation_extra_price
 
     @property
     def subtotal(self):

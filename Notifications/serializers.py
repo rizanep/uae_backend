@@ -23,6 +23,16 @@ class BroadcastSerializer(serializers.ModelSerializer):
     template = serializers.PrimaryKeyRelatedField(
         queryset=NotificationTemplate.objects.all(), required=False, allow_null=True
     )
+    image_url = serializers.SerializerMethodField(read_only=True)
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return None
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(obj.image.url)
+        from django.conf import settings
+        return settings.SITE_URL.rstrip("/") + obj.image.url
 
     class Meta:
         model = Broadcast
@@ -30,6 +40,8 @@ class BroadcastSerializer(serializers.ModelSerializer):
             "id",
             "subject",
             "message",
+            "image",
+            "image_url",
             "template",
             "type",
             "recipients",

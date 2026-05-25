@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Simak Fresh{% endblock %}</title>
+    <title>{% block title %}{{ app_name }}{% endblock %}</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -26,15 +26,26 @@
             border-bottom: 2px solid #e9ecef;
             padding-bottom: 20px;
         }
-        .logo {
-            font-size: 28px;
-            font-weight: bold;
-            color: #28a745;
-            margin-bottom: 10px;
+        .logo-img {
+            display: block;
+            margin: 0 auto 12px;
+            max-width: 280px;
+            width: 100%;
+            height: auto;
+            border: 0;
         }
         .logo-text {
+            color: #28a745;
+            font-size: 15px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            margin-bottom: 16px;
+        }
+        .motto {
             color: #6c757d;
-            font-size: 14px;
+            font-size: 13px;
+            font-style: italic;
+            margin: 0 0 16px;
         }
         .content {
             margin: 20px 0;
@@ -50,14 +61,11 @@
         .button {
             display: inline-block;
             background-color: #28a745;
-            color: white;
+            color: #ffffff !important;
             padding: 12px 24px;
             text-decoration: none;
             border-radius: 5px;
             margin: 10px 0;
-        }
-        .button:hover {
-            background-color: #218838;
         }
         .highlight {
             background-color: #fff3cd;
@@ -71,9 +79,19 @@
 <body>
     <div class="container">
         <div class="header">
-            <div class="logo">SIMAK FRESH</div>
-            <div class="logo-text">Fresh • Quality • Delivered</div>
-            <h1>{% block page_title %}Welcome to Simak Fresh{% endblock %}</h1>
+            {% if logo_available %}
+            <img
+                src="{{ logo_url }}"
+                alt="{{ app_name }}"
+                class="logo-img"
+                width="280"
+                style="display:block;margin:0 auto 12px;max-width:280px;width:100%;height:auto;border:0;"
+            />
+            {% else %}
+            <div style="font-size:28px;font-weight:bold;color:#28a745;margin-bottom:10px;">{{ app_name }}</div>
+            {% endif %}
+            <p class="logo-text">{{ store_motto }}</p>
+            <h1 style="margin: 0; font-size: 22px;">{% block page_title %}Welcome to {{ app_name }}{% endblock %}</h1>
         </div>
 
         <div class="content">
@@ -81,10 +99,11 @@
         </div>
 
         <div class="footer">
-            <p><strong>SIMAK FRESH</strong> - Fresh • Quality • Delivered</p>
-            <p>© 2024 Simak Fresh. All rights reserved.</p>
-            <p>Visit us at <a href="{{ site_url }}">{{ site_url|slice:":8" }}simakfresh.com</a></p>
-            <p>If you have any questions, please contact our support team.</p>
+            <p><strong>{{ app_name }}</strong></p>
+            <p class="motto" style="color:#6c757d;font-size:13px;font-style:italic;margin:8px 0;">{{ store_motto }}</p>
+            <p>&copy; {% now "Y" %} {{ app_name }}. All rights reserved.</p>
+            <p>Visit us at <a href="{{ site_url }}">{{ site_url }}</a></p>
+            <p>Questions? <a href="mailto:{{ support_email }}">{{ support_email }}</a></p>
         </div>
     </div>
 </body>

@@ -33,8 +33,6 @@ INSTALLED_APPS = [
     'Notifications',
     'django_filters',
     'Marketing.apps.MarketingConfig',
-    'WhatsApp.apps.WhatsappConfig',
-    'SMS.apps.SmsConfig',
 ]
 
 MIDDLEWARE = [
@@ -137,6 +135,13 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 # Site URL for emails and links
 SITE_URL = os.environ.get('SITE_URL', 'https://simakfresh.ae')
+APP_NAME = os.environ.get('APP_NAME', 'Simak Fresh')
+STORE_MOTTO = os.environ.get('STORE_MOTTO', 'Live Seafood from SEA to HOME')
+SUPPORT_EMAIL = os.environ.get('SUPPORT_EMAIL', 'support@simakfresh.com')
+# Email branding (real PNG at media/branding/email_logo.png — must be publicly served)
+_default_logo_url = f"{SITE_URL.rstrip('/')}/media/branding/email_logo.png"
+EMAIL_LOGO_URL = os.environ.get('EMAIL_LOGO_URL', '').strip() or _default_logo_url
+EMAIL_LOGO_PATH = os.environ.get('EMAIL_LOGO_PATH', '').strip() or str(BASE_DIR / 'media' / 'branding' / 'email_logo.png')
 
 # Twilio Configuration
 TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
@@ -341,12 +346,16 @@ USE_REAL_MSG91_SMS = os.environ.get('USE_REAL_MSG91_SMS', 'false').lower() == 't
 USE_REAL_MSG91_WHATSAPP = os.environ.get('USE_REAL_MSG91_WHATSAPP', 'false').lower() == 'true'
 
 # OTP templates
-MSG91_OTP_SMS_TEMPLATE_ID = os.environ.get('MSG91_OTP_SMS_TEMPLATE_ID', '')
+MSG91_OTP_SMS_TEMPLATE_ID = os.environ.get('MSG91_OTP_SMS_TEMPLATE_ID', 'otp')
 MSG91_OTP_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_OTP_WHATSAPP_TEMPLATE_NAME', '')
+MSG91_WHATSAPP_NAMESPACE = os.environ.get('MSG91_WHATSAPP_NAMESPACE', '')
 
 # Order lifecycle templates
+MSG91_ORDER_STATUS_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_ORDER_STATUS_WHATSAPP_TEMPLATE_NAME', '')
+MSG91_ORDER_STATUS_HEADER_IMAGE_URL = os.environ.get('MSG91_ORDER_STATUS_HEADER_IMAGE_URL', '')
 MSG91_ORDER_PENDING_SMS_TEMPLATE_ID = os.environ.get('MSG91_ORDER_PENDING_SMS_TEMPLATE_ID', '')
 MSG91_ORDER_PENDING_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_ORDER_PENDING_WHATSAPP_TEMPLATE_NAME', '')
+MSG91_ORDER_PENDING_HEADER_IMAGE_URL = os.environ.get('MSG91_ORDER_PENDING_HEADER_IMAGE_URL', '')
 MSG91_ORDER_PAID_SMS_TEMPLATE_ID = os.environ.get('MSG91_ORDER_PAID_SMS_TEMPLATE_ID', '')
 MSG91_ORDER_PAID_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_ORDER_PAID_WHATSAPP_TEMPLATE_NAME', '')
 MSG91_ORDER_PROCESSING_SMS_TEMPLATE_ID = os.environ.get('MSG91_ORDER_PROCESSING_SMS_TEMPLATE_ID', '')
@@ -361,6 +370,18 @@ MSG91_ORDER_CANCELLED_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_ORDER_CANCE
 # Payment receipt templates
 MSG91_PAYMENT_RECEIPT_SMS_TEMPLATE_ID = os.environ.get('MSG91_PAYMENT_RECEIPT_SMS_TEMPLATE_ID', '')
 MSG91_PAYMENT_RECEIPT_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_PAYMENT_RECEIPT_WHATSAPP_TEMPLATE_NAME', '')
+
+# Stock back-in-stock templates
+MSG91_STOCK_SMS_TEMPLATE_ID = os.environ.get('MSG91_STOCK_SMS_TEMPLATE_ID', '')
+MSG91_STOCK_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_STOCK_WHATSAPP_TEMPLATE_NAME', '')
+
+# Admin broadcast notification templates
+MSG91_ADMIN_NOTIFICATION_SMS_TEMPLATE_ID = os.environ.get('MSG91_ADMIN_NOTIFICATION_SMS_TEMPLATE_ID', '')
+MSG91_ADMIN_NOTIFICATION_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_ADMIN_NOTIFICATION_WHATSAPP_TEMPLATE_NAME', '')
+
+# Review request templates (sent after delivery)
+MSG91_REVIEW_REQUEST_SMS_TEMPLATE_ID = os.environ.get('MSG91_REVIEW_REQUEST_SMS_TEMPLATE_ID', '')
+MSG91_REVIEW_REQUEST_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_REVIEW_REQUEST_WHATSAPP_TEMPLATE_NAME', '')
 
 # WhatsApp configuration
 WHATSAPP_ENABLE_LOGGING = os.environ.get('WHATSAPP_ENABLE_LOGGING', 'true').lower() == 'true'
