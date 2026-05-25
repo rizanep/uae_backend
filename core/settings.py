@@ -137,6 +137,13 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 # Site URL for emails and links
 SITE_URL = os.environ.get('SITE_URL', 'https://simakfresh.ae')
+APP_NAME = os.environ.get('APP_NAME', 'Simak Fresh')
+STORE_MOTTO = os.environ.get('STORE_MOTTO', 'Live Seafood from SEA to HOME')
+SUPPORT_EMAIL = os.environ.get('SUPPORT_EMAIL', 'support@simakfresh.com')
+# Email branding (real PNG at media/branding/email_logo.png — must be publicly served)
+_default_logo_url = f"{SITE_URL.rstrip('/')}/media/branding/email_logo.png"
+EMAIL_LOGO_URL = os.environ.get('EMAIL_LOGO_URL', '').strip() or _default_logo_url
+EMAIL_LOGO_PATH = os.environ.get('EMAIL_LOGO_PATH', '').strip() or str(BASE_DIR / 'media' / 'branding' / 'email_logo.png')
 
 # Twilio Configuration
 TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')

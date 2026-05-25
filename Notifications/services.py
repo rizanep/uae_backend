@@ -3,8 +3,7 @@ import re
 from typing import Dict, Optional, Tuple
 
 from django.conf import settings
-from django.core.mail import send_mail
-
+from Notifications.email_service import EmailService
 from SMS.services import MSG91SMSService
 from WhatsApp.services import MSG91WhatsAppService
 
@@ -138,24 +137,14 @@ class UnifiedNotificationService:
         recipient_email: str,
         subject: str,
         message: str,
+        html_template: Optional[str] = None,
+        template_context: Optional[Dict] = None,
         html_message: Optional[str] = None,
     ) -> Tuple[bool, Dict]:
-        if not recipient_email:
-            return False, {"error": "missing recipient email"}
-
-        if not getattr(settings, "USE_REAL_SMTP", False):
-            return True, {"status": "skipped", "reason": "USE_REAL_SMTP is false"}
-
-        try:
-            send_mail(
-                subject=subject,
-                message=message,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[recipient_email],
-                html_message=html_message,
-                fail_silently=False,
-            )
-            return True, {"status": "sent"}
-        except Exception as exc:
-            logger.exception("Email send exception", extra={"recipient_email": recipient_email})
-            return False, {"error": str(exc)}
+        return EmailService.send(
+            recipient_email=recipient_email,
+            subject=subject,
+            plain_message=message,
+            html_template=html_template,
+            template_context=template_context,
+        )

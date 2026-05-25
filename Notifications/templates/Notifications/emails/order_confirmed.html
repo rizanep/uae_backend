@@ -26,10 +26,10 @@
             <td style="padding: 8px 0; border-bottom: 1px solid #dee2e6;"><strong>Total Amount:</strong></td>
             <td style="padding: 8px 0; border-bottom: 1px solid #dee2e6; color: #28a745; font-weight: bold;">AED {{ order.total_amount }}</td>
         </tr>
-        {% if order.delivery_date and order.delivery_slot %}
+        {% if order.preferred_delivery_date and order.preferred_delivery_slot %}
         <tr>
             <td style="padding: 8px 0; border-bottom: 1px solid #dee2e6;"><strong>Delivery:</strong></td>
-            <td style="padding: 8px 0; border-bottom: 1px solid #dee2e6;">{{ order.delivery_date|date:"M d, Y" }} - {{ order.delivery_slot.name }}</td>
+            <td style="padding: 8px 0; border-bottom: 1px solid #dee2e6;">{{ order.preferred_delivery_date|date:"M d, Y" }} - {{ order.preferred_delivery_slot.name }}</td>
         </tr>
         {% endif %}
     </table>

@@ -151,10 +151,10 @@ class PaymentSerializer(serializers.ModelSerializer):
 class OrderItemSerializer(serializers.ModelSerializer):
     subtotal = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     product_image = serializers.SerializerMethodField()
-
+    unit = serializers.CharField(source='product.unit', read_only=True)
     class Meta:
         model = OrderItem
-        fields = ["id", "product", "product_name", "product_image", "quantity", "price", "subtotal"]
+        fields = ["id", "product", "product_name", "product_image", "quantity", "unit", "price", "subtotal"]
 
     def get_product_image(self, obj):
         if obj.product and obj.product.image:

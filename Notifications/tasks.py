@@ -1,11 +1,10 @@
 from celery import shared_task
-from django.core.mail import send_mail
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.template.loader import render_to_string
 from django.utils import timezone
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
+from .email_service import EmailService
 from .models import ContactMessage, Notification
 from .services import UnifiedNotificationService
 
@@ -28,10 +27,8 @@ def send_contact_reply_email(contact_message_id, reply_message, mark_resolved=Fa
     except ContactMessage.DoesNotExist:
         return f"Contact message with ID {contact_message_id} not found"
 
-    # Compose reply email
     subject = f"Re: {contact_msg.subject}"
-    message = f"""
-Dear {contact_msg.name},
+    plain_message = f"""Dear {contact_msg.name},
 
 Thank you for contacting us. Here's our response to your message:
 
@@ -42,44 +39,23 @@ Our reply:
 {reply_message}
 
 Best regards,
-Support Team
-    """
+Support Team"""
 
     try:
-        # Render HTML email template
-        html_message = render_to_string('Notifications/emails/contact_reply.html', {
-            'contact_name': contact_msg.name,
-            'original_message': contact_msg.message,
-            'reply_message': reply_message,
-            'is_resolved': mark_resolved,
-            'site_url': settings.SITE_URL,
-        })
-
-        # Create plain text version
-        subject = f"Re: {contact_msg.subject}"
-        plain_message = f"""
-Dear {contact_msg.name},
-
-Thank you for contacting us. Here's our response to your message:
-
-Your original message:
-"{contact_msg.message}"
-
-Our reply:
-{reply_message}
-
-Best regards,
-Support Team
-        """
-
-        send_mail(
-            subject,
-            plain_message.strip(),
-            settings.DEFAULT_FROM_EMAIL,
-            [contact_msg.email],
-            html_message=html_message,
-            fail_silently=False,
+        success, response = EmailService.send(
+            recipient_email=contact_msg.email,
+            subject=subject,
+            plain_message=plain_message,
+            html_template="Notifications/emails/contact_reply.html",
+            template_context={
+                "contact_name": contact_msg.name,
+                "original_message": contact_msg.message,
+                "reply_message": reply_message,
+                "is_resolved": mark_resolved,
+            },
         )
+        if not success:
+            return f"Failed to send reply email: {response}"
 
         # Create in-app notification for the user
         Notification.objects.create(
@@ -108,46 +84,28 @@ Support Team
 
 @shared_task
 def send_stock_notification_email(user_id, product_name):
-    """
-    Send email notification when product comes back in stock.
-    """
-    if not getattr(settings, "USE_REAL_SMTP", False):
-        return f"Email disabled (console mode). Would send to user {user_id} about {product_name}"
-
+    """Send email notification when product comes back in stock."""
     try:
         user = User.objects.get(id=user_id)
         if not user.email:
             return f"User {user_id} has no email"
 
-        # Render HTML email template
-        html_message = render_to_string('Notifications/emails/stock_notification.html', {
-            'user': user,
-            'product_name': product_name,
-            'site_url': settings.SITE_URL,
-        })
-
-        # Create plain text version
         subject = f"Good news! {product_name} is back in stock"
-        plain_message = f"""
-Dear {user.first_name or user.email},
-
-Great news! The product "{product_name}" that you were waiting for is now back in stock.
-
-You can now place your order through our app.
-
-Best regards,
-Your Store Team
-        """
-
-        send_mail(
-            subject=subject,
-            message=plain_message.strip(),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            html_message=html_message,
-            fail_silently=False,
+        plain_message = (
+            f"Dear {user.first_name or user.email},\n\n"
+            f'"{product_name}" is back in stock. You can place your order in the app.\n\n'
+            f"Best regards,\n{settings.APP_NAME} Team"
         )
-        return f"Stock notification email sent to {user.email}"
+        success, response = EmailService.send(
+            recipient_email=user.email,
+            subject=subject,
+            plain_message=plain_message,
+            html_template="Notifications/emails/stock_notification.html",
+            template_context={"user": user, "product_name": product_name},
+        )
+        if success:
+            return f"Stock notification email sent to {user.email}"
+        return f"Failed to send stock notification email: {response}"
 
     except User.DoesNotExist:
         return f"User {user_id} not found"
@@ -194,165 +152,108 @@ def send_stock_notification_whatsapp(user_id, product_name):
         return f"Failed to send WhatsApp stock notification: {str(e)}"
 
 
+def _send_otp_verification_email_to(recipient_email, user, otp_code):
+    subject = "Your verification code"
+    plain_message = (
+        f"Hello {user.first_name or 'there'},\n\n"
+        f"Your verification code is: {otp_code}\n\n"
+        "This code will expire in 5 minutes.\n\n"
+        "If you didn't request this verification, please ignore this email."
+    )
+    return EmailService.send(
+        recipient_email=recipient_email,
+        subject=subject,
+        plain_message=plain_message,
+        html_template="Notifications/emails/otp_verification.html",
+        template_context={"user": user, "otp_code": otp_code},
+    )
+
+
 @shared_task
 def send_otp_verification_email(user_id, otp_code):
-    """
-    Send OTP verification email to user.
-    """
-    if not getattr(settings, "USE_REAL_SMTP", False):
-        return f"Email disabled (console mode). Would send OTP {otp_code} to user {user_id}"
-
+    """Send OTP verification email to user."""
     try:
         user = User.objects.get(id=user_id)
         if not user.email:
             return f"User {user_id} has no email"
-
-        # Render HTML email template
-        html_message = render_to_string('Notifications/emails/otp_verification.html', {
-            'user': user,
-            'otp_code': otp_code,
-            'site_url': settings.SITE_URL,
-        })
-
-        # Create plain text version
-        subject = "Your verification code"
-        plain_message = f"""
-Hello {user.first_name or 'there'},
-
-Your verification code is: {otp_code}
-
-This code will expire in 5 minutes.
-
-If you didn't request this verification, please ignore this email.
-
-Best regards,
-Simak Fresh Team
-        """
-
-        send_mail(
-            subject=subject,
-            message=plain_message.strip(),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            html_message=html_message,
-            fail_silently=False,
-        )
-        return f"OTP verification email sent to {user.email}"
-
+        success, response = _send_otp_verification_email_to(user.email, user, otp_code)
+        if success:
+            return f"OTP verification email sent to {user.email}"
+        return f"Failed to send OTP verification email: {response}"
     except User.DoesNotExist:
         return f"User {user_id} not found"
     except Exception as e:
         return f"Failed to send OTP verification email: {str(e)}"
 
 
+def _send_order_confirmed_email_to(recipient_email, order):
+    subject = f"Order Confirmed - #{order.id}"
+    plain_message = (
+        f"Dear {order.user.first_name or order.user.email},\n\n"
+        f"Your order #{order.id} has been confirmed. Total: AED {order.total_amount}.\n\n"
+        f"Thank you for choosing {settings.APP_NAME}!"
+    )
+    return EmailService.send(
+        recipient_email=recipient_email,
+        subject=subject,
+        plain_message=plain_message,
+        html_template="Notifications/emails/order_confirmed.html",
+        template_context={"order": order},
+    )
+
+
 @shared_task
 def send_order_confirmed_email(order_id):
-    """
-    Send email when order status changes to PAID (confirmed).
-    """
-    if not getattr(settings, "USE_REAL_SMTP", False):
-        return f"Email disabled (console mode). Would send order confirmation for order {order_id}"
+    """Send email when order is confirmed (PAID)."""
+    from Orders.models import Order
 
     try:
-        from Orders.models import Order
-        order = Order.objects.select_related('user', 'shipping_address', 'delivery_slot').get(id=order_id)
-
+        order = Order.objects.select_related(
+            "user", "shipping_address", "preferred_delivery_slot"
+        ).prefetch_related("items").get(id=order_id)
         if not order.user.email:
             return f"User {order.user.id} has no email"
-
-        # Render HTML email template
-        html_message = render_to_string('Notifications/emails/order_confirmed.html', {
-            'order': order,
-            'site_url': settings.SITE_URL,
-        })
-
-        # Create plain text version
-        subject = f"Order Confirmed - #{order.id}"
-        plain_message = f"""
-Dear {order.user.first_name or order.user.email},
-
-Your order #{order.id} has been confirmed and payment has been successfully processed.
-
-Order Details:
-- Order ID: {order.id}
-- Total Amount: AED {order.total_amount}
-- Order Date: {order.created_at.strftime('%B %d, %Y')}
-
-We'll send you another email when your order is out for delivery.
-
-Thank you for choosing Simak Fresh!
-
-Best regards,
-Simak Fresh Team
-        """
-
-        send_mail(
-            subject=subject,
-            message=plain_message.strip(),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[order.user.email],
-            html_message=html_message,
-            fail_silently=False,
-        )
-        return f"Order confirmation email sent to {order.user.email}"
-
+        success, response = _send_order_confirmed_email_to(order.user.email, order)
+        if success:
+            return f"Order confirmation email sent to {order.user.email}"
+        return f"Failed to send order confirmation email: {response}"
     except Order.DoesNotExist:
         return f"Order {order_id} not found"
     except Exception as e:
         return f"Failed to send order confirmation email: {str(e)}"
 
 
+def _send_order_delivered_email_to(recipient_email, order):
+    subject = f"Order Delivered - #{order.id}"
+    plain_message = (
+        f"Dear {order.user.first_name or order.user.email},\n\n"
+        f"Your order #{order.id} has been delivered. Total: AED {order.total_amount}.\n\n"
+        f"Thank you for choosing {settings.APP_NAME}!"
+    )
+    return EmailService.send(
+        recipient_email=recipient_email,
+        subject=subject,
+        plain_message=plain_message,
+        html_template="Notifications/emails/order_delivered.html",
+        template_context={"order": order},
+    )
+
+
 @shared_task
 def send_order_delivered_email(order_id):
-    """
-    Send email when order status changes to DELIVERED.
-    """
-    if not getattr(settings, "USE_REAL_SMTP", False):
-        return f"Email disabled (console mode). Would send order delivered notification for order {order_id}"
+    """Send email when order status is DELIVERED."""
+    from Orders.models import Order
 
     try:
-        from Orders.models import Order
-        order = Order.objects.select_related('user', 'shipping_address').get(id=order_id)
-
+        order = Order.objects.select_related("user", "shipping_address").prefetch_related("items").get(
+            id=order_id
+        )
         if not order.user.email:
             return f"User {order.user.id} has no email"
-
-        # Render HTML email template
-        html_message = render_to_string('Notifications/emails/order_delivered.html', {
-            'order': order,
-            'site_url': settings.SITE_URL,
-        })
-
-        # Create plain text version
-        subject = f"Order Delivered - #{order.id}"
-        plain_message = f"""
-Dear {order.user.first_name or order.user.email},
-
-Your order #{order.id} has been successfully delivered!
-
-Delivery Details:
-- Order ID: {order.id}
-- Total Amount: AED {order.total_amount}
-- Delivered On: {order.delivered_at or order.updated_at}
-
-Thank you for choosing Simak Fresh! We hope you enjoyed your fresh products.
-
-Please check your order upon delivery and contact us within 24 hours if you have any issues.
-
-Best regards,
-Simak Fresh Team
-        """
-
-        send_mail(
-            subject=subject,
-            message=plain_message.strip(),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[order.user.email],
-            html_message=html_message,
-            fail_silently=False,
-        )
-        return f"Order delivered email sent to {order.user.email}"
-
+        success, response = _send_order_delivered_email_to(order.user.email, order)
+        if success:
+            return f"Order delivered email sent to {order.user.email}"
+        return f"Failed to send order delivered email: {response}"
     except Order.DoesNotExist:
         return f"Order {order_id} not found"
     except Exception as e:
@@ -386,10 +287,12 @@ def send_login_otp_notification(self, otp_id, otp_platform='sms'):
             f"Your verification code is: {otp.otp_code}\n\n"
             "This code will expire in 5 minutes."
         )
-        success, response = UnifiedNotificationService.send_email(
+        success, response = EmailService.send(
             recipient_email=otp.email,
             subject=subject,
-            message=message,
+            plain_message=message,
+            html_template="Notifications/emails/otp_verification.html",
+            template_context={"user": otp.user, "otp_code": otp.otp_code},
         )
         return {'channel': 'email', 'success': success, 'response': response}
 
@@ -430,6 +333,8 @@ def _order_status_copy(order):
                 f"Hi {user_name}, your order #{order.id} is waiting for payment. "
                 "Please complete payment now so we can confirm and start preparing it."
             ),
+            'headline': 'Complete your payment',
+            'html_template': 'Notifications/emails/order_status_update.html',
             'whatsapp_template': getattr(settings, 'MSG91_ORDER_PENDING_WHATSAPP_TEMPLATE_NAME', ''),
             'sms_template': getattr(settings, 'MSG91_ORDER_PENDING_SMS_TEMPLATE_ID', ''),
         },
@@ -439,6 +344,8 @@ def _order_status_copy(order):
                 f"Great news {user_name}! Payment received for order #{order.id}. "
                 "Your order is confirmed and being prepared."
             ),
+            'headline': 'Order confirmed',
+            'html_template': 'Notifications/emails/order_confirmed.html',
             'whatsapp_template': getattr(settings, 'MSG91_ORDER_PAID_WHATSAPP_TEMPLATE_NAME', ''),
             'sms_template': getattr(settings, 'MSG91_ORDER_PAID_SMS_TEMPLATE_ID', ''),
         },
@@ -448,6 +355,8 @@ def _order_status_copy(order):
                 f"Hi {user_name}, your order #{order.id} is being carefully prepared. "
                 "We will notify you when it is on the way."
             ),
+            'headline': 'Order is being prepared',
+            'html_template': 'Notifications/emails/order_status_update.html',
             'whatsapp_template': getattr(settings, 'MSG91_ORDER_PROCESSING_WHATSAPP_TEMPLATE_NAME', ''),
             'sms_template': getattr(settings, 'MSG91_ORDER_PROCESSING_SMS_TEMPLATE_ID', ''),
         },
@@ -457,6 +366,8 @@ def _order_status_copy(order):
                 f"Awesome {user_name}! Your order #{order.id} is out for delivery. "
                 "Please keep your phone reachable for delivery updates."
             ),
+            'headline': 'Order on the way',
+            'html_template': 'Notifications/emails/order_status_update.html',
             'whatsapp_template': getattr(settings, 'MSG91_ORDER_SHIPPED_WHATSAPP_TEMPLATE_NAME', ''),
             'sms_template': getattr(settings, 'MSG91_ORDER_SHIPPED_SMS_TEMPLATE_ID', ''),
         },
@@ -466,6 +377,8 @@ def _order_status_copy(order):
                 f"Wonderful {user_name}! Your order #{order.id} has been delivered. "
                 "Thank you for shopping with us."
             ),
+            'headline': 'Order delivered',
+            'html_template': 'Notifications/emails/order_delivered.html',
             'whatsapp_template': getattr(settings, 'MSG91_ORDER_DELIVERED_WHATSAPP_TEMPLATE_NAME', ''),
             'sms_template': getattr(settings, 'MSG91_ORDER_DELIVERED_SMS_TEMPLATE_ID', ''),
         },
@@ -475,6 +388,8 @@ def _order_status_copy(order):
                 f"Hi {user_name}, your order #{order.id} has been cancelled. "
                 "If this was unexpected, please contact support."
             ),
+            'headline': 'Order cancelled',
+            'html_template': 'Notifications/emails/order_status_update.html',
             'whatsapp_template': getattr(settings, 'MSG91_ORDER_CANCELLED_WHATSAPP_TEMPLATE_NAME', ''),
             'sms_template': getattr(settings, 'MSG91_ORDER_CANCELLED_SMS_TEMPLATE_ID', ''),
         },
@@ -483,6 +398,8 @@ def _order_status_copy(order):
     return status_messages.get(order.status, {
         'subject': f"Order Status Updated: {status_label} (#{order.id})",
         'message': f"Hi {user_name}, your order #{order.id} status is now {status_label}.",
+        'headline': f"Order status: {status_label}",
+        'html_template': 'Notifications/emails/order_status_update.html',
         'whatsapp_template': '',
         'sms_template': '',
     })
@@ -496,12 +413,15 @@ def send_order_status_multichannel_notification(self, order_id):
     from Orders.models import Order
 
     try:
-        order = Order.objects.select_related('user').get(id=order_id)
+        order = Order.objects.select_related(
+            'user', 'shipping_address', 'preferred_delivery_slot'
+        ).prefetch_related('items').get(id=order_id)
     except Order.DoesNotExist:
         return f"Order {order_id} not found"
 
     content = _order_status_copy(order)
     user = order.user
+    user_name = user.first_name or user.email or 'Customer'
     results = {
         'order_id': order.id,
         'status': order.status,
@@ -532,10 +452,19 @@ def send_order_status_multichannel_notification(self, order_id):
         results['channels']['sms'] = {'success': sms_success, 'response': sms_response}
 
     if user.email:
-        email_success, email_response = UnifiedNotificationService.send_email(
+        email_success, email_response = EmailService.send(
             recipient_email=user.email,
             subject=content['subject'],
-            message=content['message'],
+            plain_message=content['message'],
+            html_template=content.get('html_template'),
+            template_context={
+                'order': order,
+                'user_name': user_name,
+                'headline': content.get('headline', content['subject']),
+                'body_message': content['message'],
+                'status_label': order.get_status_display(),
+                'subject_line': content['subject'],
+            },
         )
         results['channels']['email'] = {'success': email_success, 'response': email_response}
 
@@ -550,7 +479,11 @@ def send_payment_receipt_multichannel_notification(self, payment_id):
     from Orders.models import Payment
 
     try:
-        payment = Payment.objects.select_related('order__user', 'receipt').get(id=payment_id)
+        payment = Payment.objects.select_related(
+            'order__user',
+            'order__shipping_address',
+            'receipt',
+        ).prefetch_related('order__items').get(id=payment_id)
     except Payment.DoesNotExist:
         return f"Payment {payment_id} not found"
     except Payment.receipt.RelatedObjectDoesNotExist:
@@ -558,15 +491,19 @@ def send_payment_receipt_multichannel_notification(self, payment_id):
 
     order = payment.order
     user = order.user
-    receipt_number = payment.receipt.receipt_number
-    issued_at = timezone.localtime(payment.receipt.generated_at).strftime('%Y-%m-%d %H:%M')
+    receipt = payment.receipt
+    receipt_number = receipt.receipt_number
+    issued_at = timezone.localtime(receipt.generated_at).strftime('%Y-%m-%d %H:%M')
+    receipt_attachment = EmailService.build_receipt_pdf_attachment(order, receipt)
+    receipt_filename = receipt_attachment[0] if receipt_attachment else f"SimakFresh_Receipt_{receipt_number}.pdf"
 
     subject = f"Payment Receipt - Order #{order.id}"
     message = (
         f"Hi {user.first_name or 'Customer'}, your payment for order #{order.id} is successful.\n"
         f"Receipt Number: {receipt_number}\n"
         f"Amount: AED {payment.amount}\n"
-        f"Issued At: {issued_at}"
+        f"Issued At: {issued_at}\n\n"
+        f"Your PDF receipt is attached ({receipt_filename})."
     )
 
     variables = {
@@ -600,11 +537,26 @@ def send_payment_receipt_multichannel_notification(self, payment_id):
         results['channels']['sms'] = {'success': sms_success, 'response': sms_response}
 
     if user.email:
-        email_success, email_response = UnifiedNotificationService.send_email(
+        attachments = [receipt_attachment] if receipt_attachment else None
+        email_success, email_response = EmailService.send(
             recipient_email=user.email,
             subject=subject,
-            message=message,
+            plain_message=message,
+            html_template='Notifications/emails/payment_receipt.html',
+            template_context={
+                'order': order,
+                'payment': payment,
+                'user_name': user.first_name or 'Customer',
+                'receipt_number': receipt_number,
+                'issued_at': issued_at,
+                'receipt_filename': receipt_filename,
+            },
+            attachments=attachments,
         )
-        results['channels']['email'] = {'success': email_success, 'response': email_response}
+        results['channels']['email'] = {
+            'success': email_success,
+            'response': email_response,
+            'pdf_attached': bool(receipt_attachment),
+        }
 
     return results
