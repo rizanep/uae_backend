@@ -268,6 +268,36 @@ class OrderItem(models.Model):
     quantity = models.PositiveIntegerField(_("quantity"))
     price = models.DecimalField(_("price"), max_digits=10, decimal_places=2)
 
+
+    # Preparation Specification Fields
+    preparation_specification = models.ForeignKey(
+        'Products.ProductPreparationSpecification',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="order_items",
+        verbose_name=_("preparation specification"),
+        help_text=_("Selected preparation method for this product"),
+    )
+    preparation_specification_name = models.CharField(
+        _("preparation specification name"),
+        max_length=255,
+        blank=True,
+        help_text=_("Snapshot of the preparation spec name at order time"),
+    )
+    preparation_extra_price = models.DecimalField(
+        _("preparation extra price"),
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        help_text=_("Extra price for this preparation method at order time"),
+    )
+    preparation_instructions = models.TextField(
+        _("preparation instructions"),
+        blank=True,
+        null=True,
+        help_text=_("Additional custom instructions provided by the user"),
+    )
     class Meta:
         verbose_name = _("Order Item")
         verbose_name_plural = _("Order Items")
