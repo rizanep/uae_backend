@@ -15,7 +15,7 @@ class OrderItemInline(admin.TabularInline):
     model = OrderItem
     extra = 0
     readonly_fields = ["product_name", "quantity", "price", "subtotal"]
-    fields = ["product_name", "quantity", "price", "subtotal", "preparation_specification_name", "preparation_extra_price", "preparation_instructions"]
+    fields = ["product_name", "quantity", "price", "subtotal"]
 
 
 class OrderStatusHistoryInline(admin.TabularInline):

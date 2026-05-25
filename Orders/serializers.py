@@ -177,7 +177,6 @@ class OrderItemSerializer(serializers.ModelSerializer):
     product_image = serializers.SerializerMethodField()
     product_unit = serializers.CharField(source="product.unit", read_only=True)
     product_unit_display = serializers.CharField(source="product.get_unit_display", read_only=True)
-    total_with_preparation = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
 
     class Meta:
         model = OrderItem
@@ -191,13 +190,8 @@ class OrderItemSerializer(serializers.ModelSerializer):
             "quantity",
             "price",
             "subtotal",
-            "preparation_specification",
-            "preparation_specification_name",
-            "preparation_extra_price",
-            "preparation_instructions",
-            "total_with_preparation",
         ]
-        read_only_fields = ["preparation_specification_name", "preparation_extra_price", "total_with_preparation"]
+        read_only_fields = fields
 
     def get_product_image(self, obj):
         if obj.product and obj.product.image:
