@@ -132,6 +132,12 @@ class Order(models.Model):
         choices=OrderStatus.choices,
         default=OrderStatus.PENDING,
     )
+    shipping_address_snapshot = models.JSONField(
+        _("shipping address snapshot"),
+        null=True,
+        blank=True,
+        help_text=_("Frozen copy of shipping address to preserve order history if address is deleted."),
+    )
     shipping_address = models.ForeignKey(
         UserAddress,
         on_delete=models.SET_NULL,
@@ -177,6 +183,70 @@ class Order(models.Model):
         return f"Order #{self.id} by {self.user}"
 
 
+
+    def restock_items(self):
+        """Restore product stock for all line items that still reference a product."""
+        for item in self.items.select_related("product").all():
+            if item.product_id:
+                product = item.product
+                product.stock += item.quantity
+                product.save(update_fields=["stock"])
+
+    def can_transition_to(self, new_status):
+        """Cancelled orders cannot move back to any other status."""
+        if (
+            self.status == self.OrderStatus.CANCELLED
+            and new_status != self.OrderStatus.CANCELLED
+        ):
+            return False
+        return True
+
+    @staticmethod
+    def build_shipping_address_snapshot(address):
+        if not address:
+            return None
+
+        return {
+            "id": str(address.id) if address.id is not None else None,
+            "user": address.user_id,
+            "label": address.label,
+            "address_type": address.address_type,
+            "is_default": address.is_default,
+            "full_name": address.full_name,
+            "phone_number": address.phone_number,
+            "building_name": address.building_name,
+            "flat_villa_number": address.flat_villa_number,
+            "street_address": address.street_address,
+            "area": address.area,
+            "city": address.city,
+            "emirate": address.emirate,
+            "postal_code": address.postal_code,
+            "country": address.country,
+            "latitude": str(address.latitude) if address.latitude is not None else None,
+            "longitude": str(address.longitude) if address.longitude is not None else None,
+            "created_at": address.created_at.isoformat() if address.created_at else None,
+            "updated_at": address.updated_at.isoformat() if address.updated_at else None,
+        }
+
+    def save(self, *args, **kwargs):
+        # Backward-compatible safety net for non-checkout order creation paths.
+        if self.shipping_address_id and not self.shipping_address_snapshot:
+            self.shipping_address_snapshot = self.build_shipping_address_snapshot(self.shipping_address)
+        
+        # Check for cancelled order status transitions
+        if self.pk:
+            old_status = (
+                Order.objects.filter(pk=self.pk)
+                .values_list("status", flat=True)
+                .first()
+            )
+            if (
+                old_status == self.OrderStatus.CANCELLED
+                and self.status != self.OrderStatus.CANCELLED
+            ):
+                raise ValidationError(_("Cannot change status of a cancelled order."))
+        
+        super().save(*args, **kwargs)
 class OrderItem(models.Model):
     """
     Individual items within an order.
