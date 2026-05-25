@@ -170,11 +170,62 @@ class AccountDeletionService:
 
         if deletion_status == 'permanently_deleted':
             subject = "Your Account Has Been Permanently Deleted"
+<<<<<<< HEAD
             headline = "Account permanently deleted"
             body_message = (
                 "Your account has been permanently deleted as requested. "
                 "All your personal information, orders, addresses, and related data "
                 "have been removed from our system. This action is irreversible."
+=======
+            message = f"""
+Hello,
+
+Your account has been permanently deleted as requested.
+
+All your personal information, orders, addresses, and related data have been removed from our system.
+This action is irreversible.
+
+Deletion Time: {deletion_time.strftime('%Y-%m-%d %H:%M:%S')}
+
+If you did not request this deletion or have any questions, please contact our support team.
+
+Best regards,
+{settings.APP_NAME} Team
+"""
+        else:  # anonymized
+            subject = "Your Account Has Been Anonymized"
+            message = f"""
+Hello,
+
+Your account has been anonymized as requested.
+
+Your personal information has been removed and replaced with generic data.
+You can no longer access your account with the original credentials.
+
+Anonymization Time: {deletion_time.strftime('%Y-%m-%d %H:%M:%S')}
+
+If you did not request this action or have any questions, please contact our support team.
+
+Best regards,
+{settings.APP_NAME} Team
+"""
+        
+        try:
+            if not getattr(settings, "USE_REAL_SMTP", False):
+                print(
+                    "[EMAIL CONSOLE MODE] "
+                    f"to={email} subject={subject!r} action={deletion_type}"
+                )
+                logger.info("SMTP disabled; printed deletion confirmation payload for %s", email)
+                return
+
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+                fail_silently=False,
+>>>>>>> dev
             )
         else:
             subject = "Your Account Has Been Anonymized"

@@ -46,6 +46,13 @@ class Broadcast(TimestampedModel):
     """
     subject = models.CharField(_("subject"), max_length=255, blank=True)
     message = models.TextField(_("message"), blank=True)
+    image = models.ImageField(
+        _("image"),
+        upload_to="broadcast_images/",
+        blank=True,
+        null=True,
+        help_text=_("Optional image for PUSH notifications."),
+    )
     template = models.ForeignKey(NotificationTemplate, on_delete=models.SET_NULL, null=True, blank=True, related_name="broadcasts")
     type = models.CharField(_("type"), max_length=20, choices=NotificationType.choices, default=NotificationType.IN_APP)
     recipients = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="broadcasts")

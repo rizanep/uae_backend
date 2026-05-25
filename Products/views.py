@@ -7,7 +7,7 @@ from django.db.models import Avg, Count, Q
 from django.core.cache import cache
 from django.conf import settings
 import hashlib
-from .models import Category, Product, ProductImage, ProductVideo, ProductDeliveryTier, ProductDiscountTier, ProductNotification
+from .models import Category, Product, ProductImage, ProductVideo, ProductDeliveryTier, ProductDiscountTier, ProductNotification, ProductPreparationSpecification
 from .serializers import (
     CategorySerializer,
     ProductSerializer,
@@ -15,6 +15,9 @@ from .serializers import (
     ProductVideoSerializer,
     ProductDeliveryTierSerializer,
     ProductDiscountTierSerializer,
+    ProductPreparationSpecificationSerializer,
+    ProductPreparationSpecificationAdminSerializer,
+    ProductNotificationSerializer,
 )
 
 def _get_cache_version(group):
@@ -175,18 +178,18 @@ class ProductViewSet(viewsets.ModelViewSet):
         Get a summary of product counts by status.
         Returns: total products, active, out of stock, low stock.
         """
-        products_qs = Product.objects.filter(deleted_at__isnull=True)
-        total_products = products_qs.count()
-        
-        active = products_qs.filter(is_available=True, stock__gt=0).count()
-        out_of_stock = products_qs.filter(stock=0).count()
-        low_stock = products_qs.filter(stock__gt=0, stock__lte=20).count()
-        
+        product_counts = Product.objects.filter(deleted_at__isnull=True).aggregate(
+            total_products=Count('id'),
+            active=Count('id', filter=Q(is_available=True, stock__gt=0)),
+            out_of_stock=Count('id', filter=Q(stock=0)),
+            low_stock=Count('id', filter=Q(stock__gt=0, stock__lte=20)),
+        )
+
         return Response({
-            "total_products": total_products,
-            "active": active,
-            "out_of_stock": out_of_stock,
-            "low_stock": low_stock
+            "total_products": product_counts['total_products'],
+            "active": product_counts['active'],
+            "out_of_stock": product_counts['out_of_stock'],
+            "low_stock": product_counts['low_stock'],
         })
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
@@ -220,6 +223,61 @@ class ProductViewSet(viewsets.ModelViewSet):
         result = super().perform_destroy(instance)
         _bump_cache_version("catalog")
         return result
+
+    @action(detail=True, methods=["get", "post"], url_path="preparation-specs",
+            permission_classes=[IsAdminOrReadOnly])
+    def preparation_specs(self, request, pk=None):
+        """
+        GET  /api/products/products/{id}/preparation-specs/  — list all specs for a product (admin sees all; customers see active only)
+        POST /api/products/products/{id}/preparation-specs/  — create a new spec (admin only)
+        """
+        product = self.get_object()
+        if request.method == "GET":
+            qs = product.preparation_specifications.all()
+            if not (request.user and request.user.is_staff):
+                qs = qs.filter(is_active=True)
+            qs = qs.order_by("sort_order", "id")
+            serializer = ProductPreparationSpecificationAdminSerializer(qs, many=True, context={"request": request})
+            return Response(serializer.data)
+        # POST — admin only
+        if not (request.user and request.user.is_staff):
+            return Response({"detail": "Permission denied."}, status=403)
+        data = request.data.copy()
+        data["product"] = product.pk
+        serializer = ProductPreparationSpecificationAdminSerializer(data=data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        _bump_cache_version("catalog")
+        return Response(serializer.data, status=201)
+
+    @action(detail=True, methods=["get"], url_path="notifying-users",
+            permission_classes=[permissions.IsAdminUser])
+    def notifying_users(self, request, pk=None):
+        """
+        Get list of users who are notified for this product (admin only).
+        Shows count of notifying users and their details.
+        Only displays users with pending notifications (notified=False).
+        """
+        product = self.get_object()
+        
+        # Get pending notifications (notified=False)
+        pending_notifications = ProductNotification.objects.filter(
+            product=product,
+            notified=False
+        ).select_related('user').order_by('-created_at')
+        
+        # Get count
+        pending_count = pending_notifications.count()
+        
+        serializer = ProductNotificationSerializer(pending_notifications, many=True)
+        
+        return Response({
+            "product_id": product.id,
+            "product_name": product.name,
+            "pending_notifications_count": pending_count,
+            "notifying_users": serializer.data
+        })
+
 
 class ProductImageViewSet(viewsets.ModelViewSet):
     queryset = ProductImage.objects.select_related('product')
@@ -256,3 +314,37 @@ class ProductDiscountTierViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAdminUser]
     filter_backends = [django_filters.DjangoFilterBackend]
     filterset_fields = "__all__"
+
+
+class ProductPreparationSpecificationViewSet(viewsets.ModelViewSet):
+    """
+    CRUD endpoint for preparation specifications.
+    Admin: full create/read/update/delete.
+    Customers: read-only (active specs only via product detail).
+
+    Endpoints:
+      GET    /api/products/preparation-specs/?product={id}  — list specs (filter by product)
+      POST   /api/products/preparation-specs/               — create spec
+      GET    /api/products/preparation-specs/{id}/          — retrieve spec
+      PATCH  /api/products/preparation-specs/{id}/          — update spec
+      DELETE /api/products/preparation-specs/{id}/          — delete spec
+    """
+    queryset = ProductPreparationSpecification.objects.select_related("product").order_by("sort_order", "id")
+    permission_classes = [permissions.IsAdminUser]
+    filter_backends = [django_filters.DjangoFilterBackend]
+    filterset_fields = ["product", "is_active"]
+
+    def get_serializer_class(self):
+        return ProductPreparationSpecificationAdminSerializer
+
+    def perform_create(self, serializer):
+        serializer.save()
+        _bump_cache_version("catalog")
+
+    def perform_update(self, serializer):
+        serializer.save()
+        _bump_cache_version("catalog")
+
+    def perform_destroy(self, instance):
+        instance.delete()
+        _bump_cache_version("catalog")

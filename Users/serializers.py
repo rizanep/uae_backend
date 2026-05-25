@@ -48,6 +48,7 @@ class UserSerializer(serializers.ModelSerializer):
             'profile',
             'delivery_profile',
             'referral_code',
+            'nationality',
         ]
         read_only_fields = [
             'role',
@@ -159,6 +160,7 @@ class UserUpdateSerializer(serializers.ModelSerializer):
             'phone_number',
             'first_name',
             'last_name',
+            'nationality',
             'profile',
         ]
 
@@ -197,10 +199,14 @@ class UserUpdateSerializer(serializers.ModelSerializer):
 
 class UserAdminSerializer(serializers.ModelSerializer):
     profile = UserProfileSerializer(read_only=True)
+    addresses = serializers.SerializerMethodField()
     
     class Meta:
         model = User
         exclude = ['password']
+
+    def get_addresses(self, obj):
+        return UserAddressSerializer(obj.addresses.all(), many=True, context=self.context).data
 
     def validate(self, attrs):
         email = attrs.get('email', None)

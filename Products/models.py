@@ -1,6 +1,7 @@
 from django.db import models
 from django.utils.text import slugify
 from django.utils.translation import gettext_lazy as _
+from decimal import Decimal
 from Users.models import SoftDeleteModel
 
 # Import Delivery Models (Circular import handling might be needed if they import Product)
@@ -250,3 +251,64 @@ class ProductNotification(models.Model):
 
     def __str__(self):
         return f"{self.user} - {self.product.name}"
+
+
+class ProductPreparationSpecification(models.Model):
+    """
+    Preparation specifications for products (e.g., seafood).
+    Admin defines how a product can be prepared/packaged.
+    Users must select one preparation option when ordering.
+    
+    Examples:
+    - Live (Packed in Air bag)
+    - Whole uncleaned, fresh caught (Packed with ice)
+    - Whole cleaned headon, fresh caught (Packed with ice)
+    - Whole cleaned headless, fresh caught (Packed with ice)
+    """
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name='preparation_specifications',
+        verbose_name=_("product"),
+    )
+    name = models.CharField(
+        _("name"),
+        max_length=255,
+        help_text=_("e.g., 'Live (Packed in Air bag)' or 'Whole cleaned headon'"),
+    )
+    description = models.TextField(
+        _("description"),
+        blank=True,
+        help_text=_("Additional details about this preparation method"),
+    )
+    image = models.ImageField(
+        _("image"),
+        upload_to="preparation_specs/",
+        blank=True,
+        null=True,
+        help_text=_("Visual representation of this preparation option"),
+    )
+    extra_price = models.DecimalField(
+        _("extra price"),
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        help_text=_("Additional cost for this preparation method (in AED)"),
+    )
+    is_active = models.BooleanField(_("is active"), default=True)
+    sort_order = models.PositiveIntegerField(_("sort order"), default=0, help_text=_("Lower numbers appear first"))
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Product Preparation Specification")
+        verbose_name_plural = _("Product Preparation Specifications")
+        unique_together = [('product', 'name')]
+        ordering = ['sort_order', 'name']
+        indexes = [
+            models.Index(fields=['product', 'is_active']),
+        ]
+
+    def __str__(self):
+        price_str = f" (+{self.extra_price} AED)" if self.extra_price > 0 else ""
+        return f"{self.product.name} - {self.name}{price_str}"

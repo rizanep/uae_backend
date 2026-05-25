@@ -2,13 +2,184 @@ from celery import shared_task
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+<<<<<<< HEAD
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
 from .email_service import EmailService
+=======
+>>>>>>> dev
 from .models import ContactMessage, Notification
 from .services import UnifiedNotificationService
+from .push_service import send_push_to_tokens
 
 User = get_user_model()
+
+
+@shared_task
+def send_broadcast_push_task(broadcast_id):
+    """
+    Send PUSH broadcast asynchronously in token batches.
+    This avoids blocking admin/API requests for large recipient sets.
+    """
+    from .models import Broadcast, NotificationType, FCMDevice
+
+    try:
+        broadcast = Broadcast.objects.select_related("template").get(id=broadcast_id)
+    except Broadcast.DoesNotExist:
+        return {"success": False, "error": f"Broadcast {broadcast_id} not found"}
+
+    if broadcast.type != NotificationType.PUSH:
+        return {"success": False, "error": "Broadcast type is not PUSH"}
+
+    template = broadcast.template
+    subject = broadcast.subject or (template.subject if template else None) or "Notification"
+    message = broadcast.message or (template.body if template else "")
+    if broadcast.image:
+        from django.conf import settings
+        image_url = settings.SITE_URL.rstrip("/") + broadcast.image.url
+    else:
+        image_url = None
+
+    if broadcast.send_to_all:
+        token_qs = FCMDevice.objects.filter(is_active=True, user__is_active=True)
+    else:
+        recipient_ids = broadcast.recipients.values_list("id", flat=True)
+        token_qs = FCMDevice.objects.filter(is_active=True, user_id__in=recipient_ids)
+
+    tokens = list(token_qs.values_list("registration_token", flat=True))
+    if not tokens:
+        return {
+            "success": True,
+            "broadcast_id": broadcast_id,
+            "success_count": 0,
+            "failure_count": 0,
+            "message": "No active tokens",
+        }
+
+    # FCM multicast limit is 500 tokens/request.
+    batch_size = 500
+    total_success = 0
+    total_failure = 0
+    for i in range(0, len(tokens), batch_size):
+        batch = tokens[i:i + batch_size]
+        result = send_push_to_tokens(batch, subject, message, image=image_url)
+        total_success += result.get("success_count", 0)
+        total_failure += result.get("failure_count", 0)
+
+    return {
+        "success": True,
+        "broadcast_id": broadcast_id,
+        "success_count": total_success,
+        "failure_count": total_failure,
+        "token_count": len(tokens),
+    }
+
+
+@shared_task
+def send_broadcast_email_task(broadcast_id):
+    """Send EMAIL broadcast asynchronously to avoid blocking the request."""
+    from .models import Broadcast, NotificationType
+
+    try:
+        broadcast = Broadcast.objects.select_related("template").get(id=broadcast_id)
+    except Broadcast.DoesNotExist:
+        return {"success": False, "error": f"Broadcast {broadcast_id} not found"}
+
+    template = broadcast.template
+    subject = broadcast.subject or (template.subject if template else None) or "Notification"
+    message = broadcast.message or (template.body if template else "")
+
+    if broadcast.send_to_all:
+        users = User.objects.filter(is_active=True).values_list('email', flat=True)
+    else:
+        users = broadcast.recipients.filter(is_active=True).values_list('email', flat=True)
+
+    sent_count = 0
+    for email in users:
+        if email:
+            try:
+                UnifiedNotificationService.send_email(
+                    recipient_email=email,
+                    subject=subject,
+                    message=message,
+                )
+                sent_count += 1
+            except Exception:
+                pass
+
+    return {"success": True, "broadcast_id": broadcast_id, "sent_count": sent_count}
+
+
+@shared_task
+def send_broadcast_sms_task(broadcast_id):
+    """Send SMS broadcast asynchronously to avoid blocking the request."""
+    from .models import Broadcast
+    from django.conf import settings
+
+    try:
+        broadcast = Broadcast.objects.select_related("template").get(id=broadcast_id)
+    except Broadcast.DoesNotExist:
+        return {"success": False, "error": f"Broadcast {broadcast_id} not found"}
+
+    template = broadcast.template
+    subject = broadcast.subject or (template.subject if template else None) or "Notification"
+    message = broadcast.message or (template.body if template else "")
+
+    if broadcast.send_to_all:
+        phones = User.objects.filter(is_active=True).values_list('phone_number', flat=True)
+    else:
+        phones = broadcast.recipients.filter(is_active=True).values_list('phone_number', flat=True)
+
+    sent_count = 0
+    for phone in phones:
+        if phone:
+            try:
+                UnifiedNotificationService.send_sms(
+                    phone_number=phone,
+                    template_id=getattr(settings, 'MSG91_BROADCAST_SMS_TEMPLATE_ID', None),
+                    variables={'VAR1': subject, 'body_1': message},
+                )
+                sent_count += 1
+            except Exception:
+                pass
+
+    return {"success": True, "broadcast_id": broadcast_id, "sent_count": sent_count}
+
+
+@shared_task
+def send_broadcast_whatsapp_task(broadcast_id):
+    """Send WhatsApp broadcast asynchronously to avoid blocking the request."""
+    from .models import Broadcast
+    from django.conf import settings
+
+    try:
+        broadcast = Broadcast.objects.select_related("template").get(id=broadcast_id)
+    except Broadcast.DoesNotExist:
+        return {"success": False, "error": f"Broadcast {broadcast_id} not found"}
+
+    template = broadcast.template
+    subject = broadcast.subject or (template.subject if template else None) or "Notification"
+    message = broadcast.message or (template.body if template else "")
+
+    if broadcast.send_to_all:
+        phones = User.objects.filter(is_active=True).values_list('phone_number', flat=True)
+    else:
+        phones = broadcast.recipients.filter(is_active=True).values_list('phone_number', flat=True)
+
+    sent_count = 0
+    for phone in phones:
+        if phone:
+            try:
+                UnifiedNotificationService.send_whatsapp(
+                    phone_number=phone,
+                    template_name=getattr(settings, 'MSG91_BROADCAST_WHATSAPP_TEMPLATE_NAME', None),
+                    variables={'VAR1': subject, 'body_1': message},
+                )
+                sent_count += 1
+            except Exception:
+                pass
+
+    return {"success": True, "broadcast_id": broadcast_id, "sent_count": sent_count}
 
 
 @shared_task
@@ -42,6 +213,7 @@ Best regards,
 Support Team"""
 
     try:
+<<<<<<< HEAD
         success, response = EmailService.send(
             recipient_email=contact_msg.email,
             subject=subject,
@@ -53,6 +225,68 @@ Support Team"""
                 "reply_message": reply_message,
                 "is_resolved": mark_resolved,
             },
+=======
+        if not getattr(settings, "USE_REAL_SMTP", False):
+            console_payload = {
+                "to": contact_msg.email,
+                "subject": subject,
+                "reply_message": reply_message,
+                "mark_resolved": mark_resolved,
+            }
+            print(f"[EMAIL CONSOLE MODE] {console_payload}")
+
+            # Keep in-app behavior even when email transport is disabled.
+            Notification.objects.create(
+                user=contact_msg.user,
+                title="Response to Your Message",
+                message=f"We have replied to your message: {contact_msg.subject}\n\n{reply_message[:100]}..."
+            )
+
+            if mark_resolved:
+                contact_msg.is_resolved = True
+                contact_msg.save()
+                Notification.objects.create(
+                    user=contact_msg.user,
+                    title="Your Message Has Been Resolved",
+                    message=f"Your inquiry about '{contact_msg.subject}' has been marked as resolved."
+                )
+
+            return f"Email disabled (console mode). Printed payload for {contact_msg.email}"
+
+        # Render HTML email template
+        html_message = render_to_string('Notifications/emails/contact_reply.html', {
+            'contact_name': contact_msg.name,
+            'original_message': contact_msg.message,
+            'reply_message': reply_message,
+            'is_resolved': mark_resolved,
+            'site_url': settings.SITE_URL,
+        })
+
+        # Create plain text version
+        subject = f"Re: {contact_msg.subject}"
+        plain_message = f"""
+Dear {contact_msg.name},
+
+Thank you for contacting us. Here's our response to your message:
+
+Your original message:
+"{contact_msg.message}"
+
+Our reply:
+{reply_message}
+
+Best regards,
+Support Team
+        """
+
+        send_mail(
+            subject,
+            plain_message.strip(),
+            settings.DEFAULT_FROM_EMAIL,
+            [contact_msg.email],
+            html_message=html_message,
+            fail_silently=False,
+>>>>>>> dev
         )
         if not success:
             return f"Failed to send reply email: {response}"
@@ -114,42 +348,12 @@ def send_stock_notification_email(user_id, product_name):
 
 
 @shared_task
-def send_stock_notification_whatsapp(user_id, product_name):
+def send_stock_notification_whatsapp(user_id, product_id):
     """
-    Send WhatsApp notification when product comes back in stock.
+    TODO: Send WhatsApp notification when a product comes back in stock.
+    Uses MSG91 template: MSG91_STOCK_WHATSAPP_TEMPLATE_NAME
     """
-    if not getattr(settings, "USE_REAL_TWILIO_OTP", False):  # Reuse the setting
-        return f"WhatsApp disabled (console mode). Would send to user {user_id} about {product_name}"
-
-    try:
-        user = User.objects.get(id=user_id)
-        if not user.phone_number:
-            return f"User {user_id} has no phone number"
-
-        account_sid = settings.TWILIO_ACCOUNT_SID
-        auth_token = settings.TWILIO_AUTH_TOKEN
-        whatsapp_from = f"whatsapp:{settings.TWILIO_PHONE_NUMBER}"  # Assuming same number for WhatsApp
-
-        if not all([account_sid, auth_token, whatsapp_from]):
-            return "Twilio WhatsApp credentials not configured"
-
-        client = Client(account_sid, auth_token)
-
-        message_body = f"Good news! {product_name} is back in stock. You can now place your order!"
-
-        message = client.messages.create(
-            body=message_body,
-            from_=whatsapp_from,
-            to=f"whatsapp:{user.phone_number}"
-        )
-        return f"WhatsApp stock notification sent. SID: {message.sid}"
-
-    except User.DoesNotExist:
-        return f"User {user_id} not found"
-    except TwilioRestException as e:
-        return f"Twilio WhatsApp error: {e}"
-    except Exception as e:
-        return f"Failed to send WhatsApp stock notification: {str(e)}"
+    pass
 
 
 def _send_otp_verification_email_to(recipient_email, user, otp_code):
@@ -268,6 +472,7 @@ def send_login_otp_notification(self, otp_id, otp_platform='sms'):
     - Email OTP uses email channel.
     - Phone OTP can use SMS (default) or WhatsApp.
     """
+    # return True  # Placeholder to avoid "no return" warning during development
     from Users.models import OTPToken
 
     try:
@@ -300,9 +505,11 @@ def send_login_otp_notification(self, otp_id, otp_platform='sms'):
         return f"OTP token {otp_id} missing phone number"
 
     selected_platform = (otp_platform or 'sms').lower()
+    sms_template_id = getattr(settings, 'MSG91_OTP_SMS_TEMPLATE_ID', '')
     otp_variables = {
         'VAR1': otp.otp_code,
         'body_1': otp.otp_code,
+        'button_1': otp.otp_code,
     }
 
     if selected_platform == 'whatsapp':
@@ -314,9 +521,30 @@ def send_login_otp_notification(self, otp_id, otp_platform='sms'):
         if success:
             return {'channel': 'whatsapp', 'success': True, 'response': response}
 
+        # If WhatsApp was explicitly selected and failed, only fallback to SMS if configured.
+        if not sms_template_id:
+            return {'channel': 'whatsapp', 'success': False, 'response': response}
+
+        sms_success, sms_response = UnifiedNotificationService.send_sms(
+            phone_number=otp.phone_number,
+            template_id=sms_template_id,
+            variables=otp_variables,
+        )
+        return {'channel': 'sms', 'success': sms_success, 'response': sms_response}
+
+    if selected_platform == 'sms' and not sms_template_id:
+        return {
+            'channel': 'sms',
+            'success': False,
+            'response': {
+                'error': 'missing MSG91 SMS template id',
+                'hint': 'set MSG91_OTP_SMS_TEMPLATE_ID or request otp_platform=whatsapp',
+            },
+        }
+
     success, response = UnifiedNotificationService.send_sms(
         phone_number=otp.phone_number,
-        template_id=getattr(settings, 'MSG91_OTP_SMS_TEMPLATE_ID', ''),
+        template_id=sms_template_id,
         variables=otp_variables,
     )
     return {'channel': 'sms', 'success': success, 'response': response}
@@ -325,9 +553,11 @@ def send_login_otp_notification(self, otp_id, otp_platform='sms'):
 def _order_status_copy(order):
     status_label = order.get_status_display()
     user_name = order.user.first_name or order.user.email or 'Customer'
+    default_order_wa_template = str(getattr(settings, 'MSG91_ORDER_STATUS_WHATSAPP_TEMPLATE_NAME', '')).strip().strip('"').strip("'")
 
     status_messages = {
         'PENDING': {
+<<<<<<< HEAD
             'subject': f"Action Needed: Complete Payment for Order #{order.id}",
             'message': (
                 f"Hi {user_name}, your order #{order.id} is waiting for payment. "
@@ -337,6 +567,12 @@ def _order_status_copy(order):
             'html_template': 'Notifications/emails/order_status_update.html',
             'whatsapp_template': getattr(settings, 'MSG91_ORDER_PENDING_WHATSAPP_TEMPLATE_NAME', ''),
             'sms_template': getattr(settings, 'MSG91_ORDER_PENDING_SMS_TEMPLATE_ID', ''),
+=======
+            'subject': f"Order Status Updated: {status_label} (#{order.id})",
+            'message': f"Hi {user_name}, your order #{order.id} status is now {status_label}.",
+            'whatsapp_template': default_order_wa_template or getattr(settings, 'MSG91_ORDER_PENDING_WHATSAPP_TEMPLATE_NAME', 'order_status_pending'),
+            'sms_template': 'order_status_pending',
+>>>>>>> dev
         },
         'PAID': {
             'subject': f"Order Confirmed: #{order.id}",
@@ -344,9 +580,13 @@ def _order_status_copy(order):
                 f"Great news {user_name}! Payment received for order #{order.id}. "
                 "Your order is confirmed and being prepared."
             ),
+<<<<<<< HEAD
             'headline': 'Order confirmed',
             'html_template': 'Notifications/emails/order_confirmed.html',
             'whatsapp_template': getattr(settings, 'MSG91_ORDER_PAID_WHATSAPP_TEMPLATE_NAME', ''),
+=======
+            'whatsapp_template': default_order_wa_template or getattr(settings, 'MSG91_ORDER_PAID_WHATSAPP_TEMPLATE_NAME', ''),
+>>>>>>> dev
             'sms_template': getattr(settings, 'MSG91_ORDER_PAID_SMS_TEMPLATE_ID', ''),
         },
         'PROCESSING': {
@@ -355,9 +595,13 @@ def _order_status_copy(order):
                 f"Hi {user_name}, your order #{order.id} is being carefully prepared. "
                 "We will notify you when it is on the way."
             ),
+<<<<<<< HEAD
             'headline': 'Order is being prepared',
             'html_template': 'Notifications/emails/order_status_update.html',
             'whatsapp_template': getattr(settings, 'MSG91_ORDER_PROCESSING_WHATSAPP_TEMPLATE_NAME', ''),
+=======
+            'whatsapp_template': default_order_wa_template or getattr(settings, 'MSG91_ORDER_PROCESSING_WHATSAPP_TEMPLATE_NAME', ''),
+>>>>>>> dev
             'sms_template': getattr(settings, 'MSG91_ORDER_PROCESSING_SMS_TEMPLATE_ID', ''),
         },
         'SHIPPED': {
@@ -366,9 +610,13 @@ def _order_status_copy(order):
                 f"Awesome {user_name}! Your order #{order.id} is out for delivery. "
                 "Please keep your phone reachable for delivery updates."
             ),
+<<<<<<< HEAD
             'headline': 'Order on the way',
             'html_template': 'Notifications/emails/order_status_update.html',
             'whatsapp_template': getattr(settings, 'MSG91_ORDER_SHIPPED_WHATSAPP_TEMPLATE_NAME', ''),
+=======
+            'whatsapp_template': default_order_wa_template or getattr(settings, 'MSG91_ORDER_SHIPPED_WHATSAPP_TEMPLATE_NAME', ''),
+>>>>>>> dev
             'sms_template': getattr(settings, 'MSG91_ORDER_SHIPPED_SMS_TEMPLATE_ID', ''),
         },
         'DELIVERED': {
@@ -377,9 +625,13 @@ def _order_status_copy(order):
                 f"Wonderful {user_name}! Your order #{order.id} has been delivered. "
                 "Thank you for shopping with us."
             ),
+<<<<<<< HEAD
             'headline': 'Order delivered',
             'html_template': 'Notifications/emails/order_delivered.html',
             'whatsapp_template': getattr(settings, 'MSG91_ORDER_DELIVERED_WHATSAPP_TEMPLATE_NAME', ''),
+=======
+            'whatsapp_template': default_order_wa_template or getattr(settings, 'MSG91_ORDER_DELIVERED_WHATSAPP_TEMPLATE_NAME', ''),
+>>>>>>> dev
             'sms_template': getattr(settings, 'MSG91_ORDER_DELIVERED_SMS_TEMPLATE_ID', ''),
         },
         'CANCELLED': {
@@ -388,9 +640,13 @@ def _order_status_copy(order):
                 f"Hi {user_name}, your order #{order.id} has been cancelled. "
                 "If this was unexpected, please contact support."
             ),
+<<<<<<< HEAD
             'headline': 'Order cancelled',
             'html_template': 'Notifications/emails/order_status_update.html',
             'whatsapp_template': getattr(settings, 'MSG91_ORDER_CANCELLED_WHATSAPP_TEMPLATE_NAME', ''),
+=======
+            'whatsapp_template': default_order_wa_template or getattr(settings, 'MSG91_ORDER_CANCELLED_WHATSAPP_TEMPLATE_NAME', ''),
+>>>>>>> dev
             'sms_template': getattr(settings, 'MSG91_ORDER_CANCELLED_SMS_TEMPLATE_ID', ''),
         },
     }
@@ -401,7 +657,7 @@ def _order_status_copy(order):
         'headline': f"Order status: {status_label}",
         'html_template': 'Notifications/emails/order_status_update.html',
         'whatsapp_template': '',
-        'sms_template': '',
+        'sms_template': 'order_status_pending',
     })
 
 
@@ -437,19 +693,37 @@ def send_order_status_multichannel_notification(self, order_id):
     }
 
     if user.phone_number:
-        wa_success, wa_response = UnifiedNotificationService.send_whatsapp(
-            phone_number=user.phone_number,
-            template_name=content['whatsapp_template'],
-            variables=variables,
-        )
-        results['channels']['whatsapp'] = {'success': wa_success, 'response': wa_response}
+        # Build message template components in MSG91 format: one body variable + image header.
+        header_image_url = None
+        first_item = order.items.select_related('product').filter(product__image__isnull=False).exclude(product__image='').first()
+        if first_item and first_item.product and first_item.product.image:
+            site_url = getattr(settings, 'SITE_URL', '').rstrip('/')
+            header_image_url = f"{site_url}{first_item.product.image.url}"
+        if not header_image_url:
+            header_image_url = getattr(settings, 'MSG91_ORDER_STATUS_HEADER_IMAGE_URL', '')
+        if not header_image_url:
+            header_image_url = getattr(settings, 'MSG91_ORDER_PENDING_HEADER_IMAGE_URL', '')
 
-        sms_success, sms_response = UnifiedNotificationService.send_sms(
-            phone_number=user.phone_number,
-            template_id=content['sms_template'],
-            variables=variables,
-        )
-        results['channels']['sms'] = {'success': sms_success, 'response': sms_response}
+        if not header_image_url:
+            results['channels']['whatsapp'] = {
+                'success': False,
+                'response': {
+                    'error': 'missing order-status header image',
+                    'hint': 'set MSG91_ORDER_STATUS_HEADER_IMAGE_URL or MSG91_ORDER_PENDING_HEADER_IMAGE_URL',
+                },
+            }
+        else:
+            wa_components = {
+                'header_1': {'type': 'image', 'value': header_image_url},
+                'body_var_1': {'type': 'text', 'value': content['message'], 'parameter_name': 'var_1'},
+            }
+            wa_success, wa_response = UnifiedNotificationService.send_whatsapp(
+                phone_number=user.phone_number,
+                template_name=content['whatsapp_template'],
+                variables=None,
+                components=wa_components,
+            )
+            results['channels']['whatsapp'] = {'success': wa_success, 'response': wa_response}
 
     if user.email:
         email_success, email_response = EmailService.send(
@@ -467,6 +741,18 @@ def send_order_status_multichannel_notification(self, order_id):
             },
         )
         results['channels']['email'] = {'success': email_success, 'response': email_response}
+
+    # FCM Push notification
+    from .push_service import send_push_to_user
+    push_image = getattr(settings, 'ORDER_STATUS_PUSH_IMAGE_URL', None)
+    push_result = send_push_to_user(
+        user=user,
+        title=content['subject'],
+        body=content['message'],
+        data={'type': 'order_status', 'order_id': str(order.id), 'status': order.status},
+        image=push_image,
+    )
+    results['channels']['push'] = push_result
 
     return results
 
@@ -529,13 +815,6 @@ def send_payment_receipt_multichannel_notification(self, payment_id):
         )
         results['channels']['whatsapp'] = {'success': wa_success, 'response': wa_response}
 
-        sms_success, sms_response = UnifiedNotificationService.send_sms(
-            phone_number=user.phone_number,
-            template_id=getattr(settings, 'MSG91_PAYMENT_RECEIPT_SMS_TEMPLATE_ID', ''),
-            variables=variables,
-        )
-        results['channels']['sms'] = {'success': sms_success, 'response': sms_response}
-
     if user.email:
         attachments = [receipt_attachment] if receipt_attachment else None
         email_success, email_response = EmailService.send(
@@ -560,3 +839,265 @@ def send_payment_receipt_multichannel_notification(self, payment_id):
         }
 
     return results
+
+
+# ============================================================================
+# Scenario-specific task stubs
+# Implementations to be added once MSG91 templates are configured.
+# ============================================================================
+
+# --- OTP ---
+
+@shared_task
+def send_otp_sms(user_id, otp_code):
+    """
+    TODO: Send login OTP to user via SMS.
+    Uses MSG91 template: MSG91_OTP_SMS_TEMPLATE_ID
+    """
+    pass
+
+
+@shared_task
+def send_otp_whatsapp(user_id, otp_code):
+    """
+    Send login OTP to user via WhatsApp.
+    Uses MSG91 template: MSG91_OTP_WHATSAPP_TEMPLATE_NAME
+    """
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return f"User {user_id} not found"
+
+    if not user.phone_number:
+        return f"User {user_id} has no phone number"
+
+    variables = {
+        'body_1': otp_code,
+        'button_1': otp_code,
+    }
+
+    success, response = UnifiedNotificationService.send_whatsapp(
+        phone_number=user.phone_number,
+        template_name=getattr(settings, 'MSG91_OTP_WHATSAPP_TEMPLATE_NAME', ''),
+        variables=variables,
+    )
+
+    if success:
+        return f"OTP WhatsApp sent to {user.phone_number}"
+    return f"Failed to send OTP WhatsApp to {user.phone_number}: {response}"
+
+
+# --- Admin broadcast notifications ---
+
+@shared_task
+def send_admin_notification_sms(phone_number, template_variables=None):
+    """
+    TODO: Admin-triggered SMS broadcast to a single recipient.
+    Uses MSG91 template: MSG91_ADMIN_NOTIFICATION_SMS_TEMPLATE_ID
+    """
+    pass
+
+
+@shared_task
+def send_admin_notification_whatsapp(phone_number, template_variables=None):
+    """
+    TODO: Admin-triggered WhatsApp broadcast to a single recipient.
+    Uses MSG91 template: MSG91_ADMIN_NOTIFICATION_WHATSAPP_TEMPLATE_NAME
+    """
+    pass
+
+
+# --- Stock back-in-stock ---
+
+@shared_task
+def send_stock_back_sms(user_id, product_id):
+    """
+    TODO: Notify user via SMS that a requested product is back in stock.
+    Uses MSG91 template: MSG91_STOCK_SMS_TEMPLATE_ID
+    """
+    pass
+
+
+# --- Order: pending payment reminder (WhatsApp + email only) ---
+# Triggered with a 5-minute countdown after order creation (apply_async countdown=300).
+# Task must abort if order status has already changed to PAID before it runs.
+
+@shared_task
+def send_order_pending_reminder_whatsapp(order_id):
+    """
+    Remind user via WhatsApp to complete payment for a pending order.
+    Schedule: apply_async(countdown=300) — aborts if order.status != PENDING.
+    Uses MSG91 template: MSG91_ORDER_STATUS_WHATSAPP_TEMPLATE_NAME
+    """
+    from Orders.models import Order
+
+    try:
+        order = Order.objects.select_related('user').get(id=order_id)
+    except Order.DoesNotExist:
+        return f"Order {order_id} not found"
+
+    if order.status != 'PENDING':
+        return f"Order {order_id} is {order.status}, skipping reminder"
+
+    user = order.user
+    if not user.phone_number:
+        return f"User {user.id} has no phone number"
+
+    # Resolve header image: first order item's product main image, else shared fallback from settings.
+    header_image_url = None
+    first_item = order.items.select_related('product').filter(product__image__isnull=False).exclude(product__image='').first()
+    if first_item and first_item.product and first_item.product.image:
+        site_url = getattr(settings, 'SITE_URL', '').rstrip('/')
+        header_image_url = f"{site_url}{first_item.product.image.url}"
+    if not header_image_url:
+        header_image_url = getattr(settings, 'MSG91_ORDER_STATUS_HEADER_IMAGE_URL', '')
+    if not header_image_url:
+        header_image_url = getattr(settings, 'MSG91_ORDER_PENDING_HEADER_IMAGE_URL', '')
+
+    if not header_image_url:
+        return f"Skipping pending reminder for order {order_id}: missing header image (product image and MSG91_ORDER_PENDING_HEADER_IMAGE_URL are empty)"
+
+    button_url = f"{getattr(settings, 'SITE_URL', '').rstrip('/')}/orders/{order.id}"
+
+    # Build rich one-variable content for template var_1.
+    customer_name = user.first_name or 'Customer'
+    created_at_text = timezone.localtime(order.created_at).strftime('%d %b %Y %I:%M %p') if order.created_at else ''
+
+    item_qs = order.items.select_related('product').all()
+    item_count = item_qs.count()
+    preview_items = []
+    for item in item_qs[:4]:
+        item_name = getattr(item.product, 'name', None) or 'Product'
+        preview_items.append(f"{item_name} x{item.quantity}")
+    products_text = ', '.join(preview_items)
+    if item_count > 4:
+        products_text = f"{products_text} + {item_count - 4} more"
+
+    reminder_message = (
+        f"Dear {customer_name}, your order #{order.id} is still pending payment. "
+        f"Order summary: Products: {products_text or 'Selected items'}; "
+        f"Total amount: AED {order.total_amount}; "
+        f"Items count: {item_count}; "
+        f"Current status: {order.get_status_display()}; "
+        f"Ordered at: {created_at_text}. "
+        "Please complete payment to start preparation and dispatch. "
+        f"Payment link: {button_url}."
+    )
+
+    template_name = (
+        str(getattr(settings, 'MSG91_ORDER_STATUS_WHATSAPP_TEMPLATE_NAME', '')).strip().strip('"').strip("'")
+        or getattr(settings, 'MSG91_ORDER_PENDING_WHATSAPP_TEMPLATE_NAME', '')
+    )
+    if not template_name:
+        return (
+            f"Skipping pending reminder for order {order_id}: missing WhatsApp template name "
+            "(set MSG91_ORDER_STATUS_WHATSAPP_TEMPLATE_NAME or MSG91_ORDER_PENDING_WHATSAPP_TEMPLATE_NAME)"
+        )
+
+    components = {
+        'header_1': {'type': 'image', 'value': header_image_url},
+        'body_var_1': {'type': 'text', 'value': reminder_message, 'parameter_name': 'var_1'},
+    }
+
+    success, response = UnifiedNotificationService.send_whatsapp(
+        phone_number=user.phone_number,
+        template_name=template_name,
+        components=components,
+    )
+
+    if success:
+        return f"Pending order reminder sent to {user.phone_number} for order {order_id}"
+    return f"Failed to send pending reminder for order {order_id}: {response}"
+
+
+@shared_task
+def send_order_pending_reminder_email(order_id):
+    """
+    TODO: Remind user via email to complete payment for a pending order.
+    Schedule: apply_async(countdown=300) — abort if order.status != PENDING.
+    """
+    pass
+
+
+# --- Order: paid (WhatsApp + email) ---
+
+@shared_task
+def send_order_paid_whatsapp(order_id):
+    """
+    TODO: Notify user via WhatsApp that payment was received and order is confirmed.
+    Uses MSG91 template: MSG91_ORDER_PAID_WHATSAPP_TEMPLATE_NAME
+    """
+    pass
+
+
+@shared_task
+def send_order_paid_email(order_id):
+    """
+    TODO: Notify user via email that payment was received and order is confirmed.
+    """
+    pass
+
+
+# --- Order: post-paid status changes (WhatsApp only) ---
+
+@shared_task
+def send_order_processing_whatsapp(order_id):
+    """
+    TODO: Notify user via WhatsApp that their order is being processed/prepared.
+    Uses MSG91 template: MSG91_ORDER_PROCESSING_WHATSAPP_TEMPLATE_NAME
+    """
+    pass
+
+
+@shared_task
+def send_order_shipped_whatsapp(order_id):
+    """
+    TODO: Notify user via WhatsApp that their order is out for delivery.
+    Uses MSG91 template: MSG91_ORDER_SHIPPED_WHATSAPP_TEMPLATE_NAME
+    """
+    pass
+
+
+@shared_task
+def send_order_delivered_whatsapp(order_id):
+    """
+    TODO: Notify user via WhatsApp that their order has been delivered.
+    Uses MSG91 template: MSG91_ORDER_DELIVERED_WHATSAPP_TEMPLATE_NAME
+    """
+    pass
+
+
+@shared_task
+def send_order_cancelled_whatsapp(order_id):
+    """
+    TODO: Notify user via WhatsApp that their order has been cancelled.
+    Uses MSG91 template: MSG91_ORDER_CANCELLED_WHATSAPP_TEMPLATE_NAME
+    """
+    pass
+
+
+@shared_task
+def send_order_cancelled_email(order_id):
+    """
+    TODO: Notify user via email that their order has been cancelled.
+    """
+    pass
+
+
+# --- Review request (triggered after DELIVERED status) ---
+
+@shared_task
+def send_review_request_whatsapp(order_id):
+    """
+    TODO: Send a WhatsApp message asking the user to leave a review after delivery.
+    Uses MSG91 template: MSG91_REVIEW_REQUEST_WHATSAPP_TEMPLATE_NAME
+    """
+    pass
+
+
+@shared_task
+def send_review_request_email(order_id):
+    """
+    TODO: Send an email asking the user to leave a review after delivery.
+    """
+    pass

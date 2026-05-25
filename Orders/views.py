@@ -20,6 +20,8 @@ import hashlib
 import json
 import datetime
 import pytz
+import requests
+import uuid
 
 from .models import (
     Order,
@@ -35,14 +37,17 @@ from .models import (
 )
 from .serializers import (
     OrderSerializer,
+    OrderListSerializer,
     AdminPaymentSerializer,
     DeliveryTimeSlotSerializer,
     AdminDeliveryTimeSlotSerializer,
     DeliverySlotOverrideSerializer,
+    AdminDeliveryCancellationRequestSerializer,
 )
 from Cart.models import Cart, CartItem
 from Users.models import UserAddress, User
 from Reviews.models import Review
+from Products.models import ProductPreparationSpecification
 from .payment_service import ZiinaPaymentService
 from .receipt_templates import render_receipt_image, render_receipt_pdf, render_admin_receipt_pdf
 from .utils import calculate_delivery_estimate, get_earliest_delivery_date
@@ -55,6 +60,38 @@ logger = logging.getLogger(__name__)
 webhook_logger = logging.getLogger('Orders.webhook')
 payment_logger = logging.getLogger('Orders.payment')
 
+
+def get_cart_preparation_errors(cart_items):
+    errors = []
+    for cart_item in cart_items:
+        active_specs = cart_item.product.preparation_specifications.filter(is_active=True)
+        if active_specs.exists() and not cart_item.preparation_specification:
+            errors.append({
+                "cart_item_id": cart_item.id,
+                "product_id": cart_item.product.id,
+                "product_name": cart_item.product.name,
+                "error": "Preparation specification is required for this product.",
+            })
+            continue
+
+        if cart_item.preparation_specification:
+            if cart_item.preparation_specification.product_id != cart_item.product_id:
+                errors.append({
+                    "cart_item_id": cart_item.id,
+                    "product_id": cart_item.product.id,
+                    "product_name": cart_item.product.name,
+                    "error": "Preparation specification does not belong to this product.",
+                })
+            elif not cart_item.preparation_specification.is_active:
+                errors.append({
+                    "cart_item_id": cart_item.id,
+                    "product_id": cart_item.product.id,
+                    "product_name": cart_item.product.name,
+                    "error": "Selected preparation specification is no longer active.",
+                })
+
+    return errors
+
 class OrderViewSet(viewsets.ModelViewSet):
     """
     ViewSet for managing user orders.
@@ -66,6 +103,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     filterset_fields = [
         "id",
         "user",
+        "delivery_assignment__delivery_boy",
         "status",
         "shipping_address",
         "total_amount",
@@ -91,26 +129,50 @@ class OrderViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if not user.is_authenticated:
             return Order.objects.none()
-        qs = Order.objects.select_related(
-            "user", "shipping_address", "payment", "payment__receipt", "delivery_assignment", "delivery_proof"
-        ).prefetch_related("items", "items__product", "status_history")
+
+        if self.action in ["retrieve"]:
+            qs = Order.objects.select_related(
+                "user",
+                "shipping_address",
+                "payment",
+                "payment__receipt",
+                "delivery_assignment",
+                "delivery_proof",
+                "preferred_delivery_slot",
+            ).prefetch_related("items", "items__product", "status_history")
+        else:
+            qs = Order.objects.select_related(
+                "user",
+                "shipping_address",
+                "payment",
+                "delivery_assignment",
+                "preferred_delivery_slot",
+            )
+
         if user.role == "admin":
             return qs
         if user.role == "delivery_boy":
             delivery_profile = getattr(user, "delivery_profile", None)
             if not delivery_profile:
                 return Order.objects.none()
-            assigned_emirates = delivery_profile.assigned_emirates or []
-            return qs.filter(
-                Q(delivery_assignment__delivery_boy=user)
-                |
-                (
-                    Q(shipping_address__emirate__in=assigned_emirates)
-                    & Q(status__in=[Order.OrderStatus.PAID, Order.OrderStatus.PROCESSING])
-                    & Q(delivery_assignment__isnull=True)
+            # claim_order and retrieve need to see unassigned orders too
+            # (delivery boy views detail before claiming). Restrict to assigned
+            # orders OR unassigned orders inside their covered emirates.
+            if self.action in ("claim_order", "retrieve"):
+                return qs.filter(
+                    Q(delivery_assignment__delivery_boy=user) |
+                    Q(
+                        delivery_assignment__isnull=True,
+                        shipping_address__emirate__in=(delivery_profile.assigned_emirates or []),
+                    )
                 )
-            ).distinct()
+            return qs.filter(delivery_assignment__delivery_boy=user)
         return qs.filter(user=user)
+
+    def get_serializer_class(self):
+        if self.action in ["delivery_dashboard", "available_orders"]:
+            return OrderListSerializer
+        return OrderSerializer
 
     def _validate_delivery_access(self, order, user):
         if user.role != 'delivery_boy':
@@ -139,17 +201,25 @@ class OrderViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Delivery profile not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         today = timezone.now().date()
-        assigned_qs = DeliveryAssignment.objects.filter(delivery_boy=user)
-        completed_today = assigned_qs.filter(delivered_at__date=today).count()
-        pending_assigned = assigned_qs.exclude(order__status__in=[Order.OrderStatus.DELIVERED, Order.OrderStatus.CANCELLED]).count()
+        # Single aggregate query instead of 4 separate COUNTs
+        assignment_stats = DeliveryAssignment.objects.filter(delivery_boy=user).aggregate(
+            total=Count('id'),
+            completed_today=Count('id', filter=Q(delivered_at__date=today)),
+            pending=Count('id', filter=~Q(order__status__in=[Order.OrderStatus.DELIVERED, Order.OrderStatus.CANCELLED])),
+            completed_total=Count('id', filter=Q(status=DeliveryAssignment.AssignmentStatus.COMPLETED)),
+        )
 
-        available_orders_qs = Order.objects.filter(
+        available_orders_count = Order.objects.filter(
             shipping_address__emirate__in=(profile.assigned_emirates or []),
             status__in=[Order.OrderStatus.PAID, Order.OrderStatus.PROCESSING],
             delivery_assignment__isnull=True,
-        )
+        ).count()
 
-        recent_orders = Order.objects.filter(delivery_assignment__delivery_boy=user).order_by('-updated_at')[:10]
+        recent_orders = (
+            Order.objects.filter(delivery_assignment__delivery_boy=user)
+            .select_related('user', 'shipping_address', 'payment', 'delivery_assignment', 'preferred_delivery_slot')
+            .order_by('-updated_at')[:10]
+        )
 
         return Response({
             'delivery_boy': {
@@ -160,13 +230,13 @@ class OrderViewSet(viewsets.ModelViewSet):
                 'assigned_emirates_display': profile.assigned_emirates_display,
             },
             'kpis': {
-                'assigned_orders': assigned_qs.count(),
-                'completed_today': completed_today,
-                'pending_assigned_orders': pending_assigned,
-                'available_orders_in_region': available_orders_qs.count(),
-                'completed_total': assigned_qs.filter(status=DeliveryAssignment.AssignmentStatus.COMPLETED).count(),
+                'assigned_orders': assignment_stats['total'],
+                'completed_today': assignment_stats['completed_today'],
+                'pending_assigned_orders': assignment_stats['pending'],
+                'available_orders_in_region': available_orders_count,
+                'completed_total': assignment_stats['completed_total'],
             },
-            'recent_assigned_orders': OrderSerializer(recent_orders, many=True, context={'request': request}).data,
+            'recent_assigned_orders': OrderListSerializer(recent_orders, many=True, context={'request': request}).data,
         })
 
     @action(detail=False, methods=["get"], permission_classes=[permissions.IsAuthenticated])
@@ -183,9 +253,9 @@ class OrderViewSet(viewsets.ModelViewSet):
             shipping_address__emirate__in=(profile.assigned_emirates or []),
             status__in=[Order.OrderStatus.PAID, Order.OrderStatus.PROCESSING],
             delivery_assignment__isnull=True,
-        ).select_related('shipping_address', 'user', 'payment')
+        ).select_related('shipping_address', 'user', 'payment', 'preferred_delivery_slot')
 
-        serializer = OrderSerializer(qs, many=True, context={'request': request})
+        serializer = OrderListSerializer(qs, many=True, context={'request': request})
         return Response(serializer.data)
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
@@ -508,11 +578,22 @@ class OrderViewSet(viewsets.ModelViewSet):
         # Get cart
         try:
             cart = Cart.objects.get(user=user)
-            cart_items = list(cart.items.select_related("product").prefetch_related("product__discount_tiers").all())
+            cart_items = list(
+                cart.items.select_related("product", "preparation_specification")
+                .prefetch_related("product__discount_tiers", "product__preparation_specifications")
+                .all()
+            )
             if not cart_items:
                 return Response({"error": "Cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
         except Cart.DoesNotExist:
             return Response({"error": "Cart not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        preparation_errors = get_cart_preparation_errors(cart_items)
+        if preparation_errors:
+            return Response({
+                "error": "Preparation specification is missing or invalid for one or more cart items.",
+                "preparation_details": preparation_errors,
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         # Validate stock availability
         stock_errors = []
@@ -617,11 +698,22 @@ class OrderViewSet(viewsets.ModelViewSet):
         try:
             cart = Cart.objects.get(user=user)
             # Optimize query to fetch discount tiers
-            cart_items = list(cart.items.select_related("product").prefetch_related("product__discount_tiers").all())
+            cart_items = list(
+                cart.items.select_related("product", "preparation_specification")
+                .prefetch_related("product__discount_tiers", "product__preparation_specifications")
+                .all()
+            )
             if not cart_items:
                 return Response({"error": "Cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
         except Cart.DoesNotExist:
             return Response({"error": "Cart not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        preparation_errors = get_cart_preparation_errors(cart_items)
+        if preparation_errors:
+            return Response({
+                "error": "Preparation specification is missing or invalid for one or more cart items.",
+                "preparation_details": preparation_errors,
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         # 2.5. Validate Preferred Delivery Date
         if delivery_date:
@@ -691,6 +783,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         order = Order.objects.create(
             user=user,
             shipping_address=address,
+            shipping_address_snapshot=Order.build_shipping_address_snapshot(address),
             total_amount=total_amount,
             tip_amount=tip_amount,
             coupon=coupon,
@@ -703,26 +796,30 @@ class OrderViewSet(viewsets.ModelViewSet):
             delivery_notes=delivery_notes
         )
 
-        # 5. Create Order Items (Snapshots)
-        order_items = []
-        for cart_item in cart_items:
-            order_items.append(OrderItem(
+        # 5. Create Order Items (Snapshots) — single bulk INSERT
+        OrderItem.objects.bulk_create([
+            OrderItem(
                 order=order,
                 product=cart_item.product,
                 product_name=cart_item.product.name,
                 quantity=cart_item.quantity,
-                price=cart_item.unit_price
-            ))
-        OrderItem.objects.bulk_create(order_items)
+                price=cart_item.base_unit_price,
+                preparation_specification=cart_item.preparation_specification,
+                preparation_instructions=cart_item.preparation_instructions,
+            )
+            for cart_item in cart_items
+        ])
 
-        # 5.5. Reduce Stock
-        for item in order.items.all():
-            product = item.product
+        # 5.5. Reduce Stock — reuse cart_items already in memory, single bulk UPDATE
+        products_to_update = []
+        for cart_item in cart_items:
+            product = cart_item.product
             if product:
-                product.stock -= item.quantity
-                if product.stock < 0:
-                    product.stock = 0
-                product.save()
+                product.stock = max(0, product.stock - cart_item.quantity)
+                products_to_update.append(product)
+        if products_to_update:
+            from Products.models import Product
+            Product.objects.bulk_update(products_to_update, ['stock'])
 
         # 6. Handle Payment
         if payment_method == "COD":
@@ -805,8 +902,8 @@ class OrderViewSet(viewsets.ModelViewSet):
             order.restock_items()
 
         order.status = new_status
-        order.save()
-        
+        order.save(update_fields=['status', 'updated_at'])
+
         # Update status history notes
         latest_history = order.status_history.last()
         if latest_history and latest_history.status == new_status:
@@ -947,9 +1044,25 @@ class OrderViewSet(viewsets.ModelViewSet):
         if order.status == Order.OrderStatus.CANCELLED:
             return Response({"error": "Order is already cancelled."}, status=status.HTTP_400_BAD_REQUEST)
         if order.status == Order.OrderStatus.PENDING:
+<<<<<<< HEAD
             order.restock_items()
             order.status = Order.OrderStatus.CANCELLED
             order.save(update_fields=["status", "updated_at"])
+=======
+            # Restore stock — single query with select_related, then bulk_update
+            items = list(order.items.select_related('product').all())
+            products_to_update = []
+            for item in items:
+                if item.product:
+                    item.product.stock += item.quantity
+                    products_to_update.append(item.product)
+            if products_to_update:
+                from Products.models import Product
+                Product.objects.bulk_update(products_to_update, ['stock'])
+
+            order.status = Order.OrderStatus.CANCELLED
+            order.save(update_fields=['status', 'updated_at'])
+>>>>>>> dev
             return Response({"message": "Order cancelled and stock restored."})
         return Response({"error": "Only pending orders can be cancelled."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1018,22 +1131,21 @@ class OrderViewSet(viewsets.ModelViewSet):
         Get a summary of order counts by status.
         Returns: total orders, processing, shipped, delivered counts.
         """
-        orders_qs = Order.objects.all()
-        total_orders = orders_qs.count()
-        
-        processing = orders_qs.filter(status=Order.OrderStatus.PROCESSING).count()
-        shipped = orders_qs.filter(status=Order.OrderStatus.SHIPPED).count()
-        delivered = orders_qs.filter(status=Order.OrderStatus.DELIVERED).count()
-        
+        order_counts = Order.objects.aggregate(
+            total_orders=Count('id'),
+            processing=Count('id', filter=Q(status=Order.OrderStatus.PROCESSING)),
+            shipped=Count('id', filter=Q(status=Order.OrderStatus.SHIPPED)),
+            delivered=Count('id', filter=Q(status=Order.OrderStatus.DELIVERED)),
+        )
         total_revenue = Payment.objects.filter(status=Payment.PaymentStatus.SUCCESS).aggregate(
             total=Sum("amount")
         )["total"] or 0
-        
+
         return Response({
-            "total_orders": total_orders,
-            "processing": processing,
-            "shipped": shipped,
-            "delivered": delivered,
+            "total_orders": order_counts['total_orders'],
+            "processing": order_counts['processing'],
+            "shipped": order_counts['shipped'],
+            "delivered": order_counts['delivered'],
             "total_revenue": str(total_revenue)
         })
 
@@ -1354,10 +1466,37 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
         amount_fils = request.data.get('amount_fils')
         currency_code = request.data.get('currency_code', 'AED')
 
+        provider_response = payment.provider_response if isinstance(payment.provider_response, dict) else {}
+        refund_id_candidates = [
+            payment.ziina_payment_intent_id,
+            payment.transaction_id,
+            provider_response.get('id'),
+            provider_response.get('payment_intent_id'),
+        ]
+
+        payment_intent_id = None
+        for candidate in refund_id_candidates:
+            if not candidate:
+                continue
+            try:
+                payment_intent_id = str(uuid.UUID(str(candidate)))
+                break
+            except (ValueError, AttributeError, TypeError):
+                continue
+
+        if not payment_intent_id:
+            return Response(
+                {
+                    "error": "No valid Ziina payment intent UUID found for this payment",
+                    "hint": "Expected a UUID from ziina_payment_intent_id/transaction_id/provider_response.id",
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         try:
             # Create refund via Ziina
             refund_data = ZiinaPaymentService.create_refund(
-                payment_intent_id=payment.transaction_id,
+                payment_intent_id=payment_intent_id,
                 amount_fils=amount_fils,
                 currency_code=currency_code
             )
@@ -1374,6 +1513,21 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                 "currency": refund_data.get('currency_code')
             }, status=status.HTTP_201_CREATED)
 
+        except ValueError as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except requests.exceptions.RequestException as e:
+            return Response(
+                {"error": f"Failed to create refund: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except RuntimeError as e:
+            return Response(
+                {"error": f"Failed to create refund: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         except Exception as e:
             return Response(
                 {"error": f"Failed to create refund: {str(e)}"},
@@ -1541,7 +1695,7 @@ def ziina_webhook(request):
         
         # Find the payment record by Ziina payment intent ID
         try:
-            payment = Payment.objects.get(ziina_payment_intent_id=payment_intent_id)
+            payment = Payment.objects.select_related('order').get(ziina_payment_intent_id=payment_intent_id)
         except Payment.DoesNotExist:
             webhook_logger.warning(f"Payment not found for intent ID: {payment_intent_id}")
             return JsonResponse({
@@ -1700,3 +1854,22 @@ class DeliverySlotOverrideViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return DeliverySlotOverride.objects.select_related('slot').all()
+
+
+class DeliveryCancellationRequestViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Admin-only read-only ViewSet to list and retrieve all delivery cancellation requests.
+    Supports filtering by status, ordering, and search.
+    """
+    serializer_class = AdminDeliveryCancellationRequestSerializer
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['status']
+    search_fields = ['order__id', 'requested_by__email', 'requested_by__phone_number']
+    ordering_fields = ['requested_at', 'reviewed_at', 'status']
+    ordering = ['-requested_at']
+
+    def get_queryset(self):
+        return DeliveryCancellationRequest.objects.select_related(
+            'order', 'requested_by', 'reviewed_by'
+        ).all()
