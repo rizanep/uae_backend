@@ -251,8 +251,9 @@ class OrderSerializer(serializers.ModelSerializer):
         if obj.shipping_address:
             return UserAddressSerializer(obj.shipping_address, context=self.context).data
 
-        if isinstance(obj.shipping_address_snapshot, dict):
-            return obj.shipping_address_snapshot
+        shipping_snapshot = getattr(obj, 'shipping_address_snapshot', None)
+        if isinstance(shipping_snapshot, dict):
+            return shipping_snapshot
 
         return None
 
