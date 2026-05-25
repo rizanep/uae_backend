@@ -177,6 +177,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
     product_image = serializers.SerializerMethodField()
     product_unit = serializers.CharField(source="product.unit", read_only=True)
     product_unit_display = serializers.CharField(source="product.get_unit_display", read_only=True)
+    preparation_specification_name = serializers.SerializerMethodField()
 
     class Meta:
         model = OrderItem
@@ -204,6 +205,12 @@ class OrderItemSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.product.image.url)
             return obj.product.image.url
         return None
+
+    def get_preparation_specification_name(self, obj):
+        """Get preparation specification name from the related object or stored snapshot."""
+        if obj.preparation_specification:
+            return obj.preparation_specification.name
+        return obj.preparation_specification_name or ""
 
 
 class OrderSerializer(serializers.ModelSerializer):
