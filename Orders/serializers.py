@@ -190,6 +190,10 @@ class OrderItemSerializer(serializers.ModelSerializer):
             "quantity",
             "price",
             "subtotal",
+            "preparation_specification",
+            "preparation_specification_name",
+            "preparation_extra_price",
+            "preparation_instructions",
         ]
         read_only_fields = fields
 
