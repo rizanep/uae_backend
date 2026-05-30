@@ -21,7 +21,8 @@ from django.conf.urls.static import static
 from core.rate_limit_monitoring import RateLimitStatusAPI, RateLimitStatsAPI
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    # Django built-in admin (keep off /admin — React admin SPA uses that prefix)
+    path('django-admin/', admin.site.urls),
     path('api/', include('Users.urls')),
     path('api/products/', include('Products.urls')),
     path('api/cart/', include('Cart.urls')),

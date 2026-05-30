@@ -51,8 +51,14 @@ class EmailService:
         logo_path = EmailService.get_logo_path()
         if not logo_path.is_file():
             return False
+        # Support both PNG and JPG formats
         with logo_path.open("rb") as logo_file:
-            return logo_file.read(8).startswith(b"\x89PNG\r\n\x1a\n")
+            header = logo_file.read(8)
+            # PNG magic bytes: 89 50 4E 47 0D 0A 1A 0A
+            is_png = header.startswith(b"\x89PNG\r\n\x1a\n")
+            # JPG magic bytes: FF D8 FF
+            is_jpg = header[:3] == b"\xff\xd8\xff"
+            return is_png or is_jpg
 
     @staticmethod
     def get_base_context() -> Dict[str, Any]:
@@ -63,7 +69,7 @@ class EmailService:
             "logo_available": EmailService.logo_file_is_valid(),
             "app_name": getattr(settings, "APP_NAME", "Simak Fresh"),
             "store_motto": getattr(settings, "STORE_MOTTO", "Live Seafood from SEA to HOME"),
-            "support_email": getattr(settings, "SUPPORT_EMAIL", "support@simakfresh.com"),
+            "support_email": getattr(settings, "SUPPORT_EMAIL", "support@simakfresh.ae"),
         }
 
     @staticmethod

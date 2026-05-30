@@ -805,6 +805,8 @@ class OrderViewSet(viewsets.ModelViewSet):
                 quantity=cart_item.quantity,
                 price=cart_item.base_unit_price,
                 preparation_specification=cart_item.preparation_specification,
+                preparation_specification_name=cart_item.preparation_specification.name if cart_item.preparation_specification else "",
+                preparation_extra_price=cart_item.preparation_extra_price,
                 preparation_instructions=cart_item.preparation_instructions,
             )
             for cart_item in cart_items

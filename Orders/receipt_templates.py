@@ -245,7 +245,7 @@ def _draw_header(pdf, width, height, logo_reader, compact=False):
     for line in [
         "Sharjah Media City, Sharjah, UAE",
         "Mushif Mall, Abu Dhabi, UAE",
-        "www.simakfresh.ae  |  +971 XX XXX XXXX",
+        "www.simakfresh.ae  |  +971 54 54 46 111",
     ]:
         cy -= 4.5*mm
         pdf.drawRightString(rx, cy, line)

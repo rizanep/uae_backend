@@ -1,7 +1,8 @@
 import json
 import logging
 import http.client
-from typing import Dict, List, Optional, Tuple
+import re
+from typing import Dict, List, Optional, Tuple, Any
 from django.conf import settings
 from django.core.cache import cache
 from rest_framework.exceptions import ValidationError
@@ -26,6 +27,60 @@ class MSG91WhatsAppService:
         if not self.auth_key or not self.integrated_number:
             logger.error("MSG91 credentials not configured in settings")
             raise ValueError("MSG91 credentials not configured")
+
+    @staticmethod
+    def normalize_recipient_number(recipient_number: str) -> str:
+        """MSG91 expects digits only (no + prefix)."""
+        if not recipient_number:
+            return ""
+        return re.sub(r"[^\d]", "", str(recipient_number).strip())
+
+    @staticmethod
+    def build_template_components(variables: Optional[Dict[str, Any]]) -> Dict[str, Dict]:
+        """
+        Build MSG91 template components from simple variables.
+
+        - body_*  -> text
+        - header_* -> text, or pass a full component dict (e.g. image header)
+        - button_* -> URL button (required for auth OTP templates with copy/link buttons)
+        """
+        components: Dict[str, Dict] = {}
+        if not variables:
+            return components
+
+        for key, value in variables.items():
+            if isinstance(value, dict) and value.get("type"):
+                components[key] = value
+                continue
+
+            if key.startswith("body_var_"):
+                # order_status template: var_1, var_2 with parameter_name
+                param = key.replace("body_var_", "var_", 1)
+                components[key] = {
+                    "type": "text",
+                    "value": str(value),
+                    "parameter_name": param,
+                }
+            elif key.startswith("body_"):
+                components[key] = {"type": "text", "value": str(value)}
+            elif key.startswith("header_"):
+                if isinstance(value, str) and value.startswith(("http://", "https://")):
+                    components[key] = {"type": "image", "value": value}
+                else:
+                    components[key] = {"type": "text", "value": str(value)}
+            elif key.startswith("button_"):
+                # auth_otp and similar templates: URL button needs subtype + value (OTP code)
+                components[key] = {
+                    "subtype": "url",
+                    "type": "text",
+                    "value": str(value),
+                }
+
+        return components
+
+    def _template_namespace(self) -> Optional[str]:
+        namespace = (getattr(settings, "MSG91_WHATSAPP_NAMESPACE", "") or "").strip()
+        return namespace or None
 
     def _make_request(
         self, 
@@ -195,7 +250,8 @@ class MSG91WhatsAppService:
         self,
         template_name: str,
         recipient_number: str,
-        variables: Optional[Dict] = None
+        variables: Optional[Dict] = None,
+        components: Optional[Dict[str, Dict]] = None,
     ) -> Tuple[bool, Dict]:
         """
         Send WhatsApp message using template
@@ -204,48 +260,42 @@ class MSG91WhatsAppService:
             template_name: Name of approved template
             recipient_number: Recipient phone number
             variables: Optional variables for template substitution
+            components: Pre-built MSG91 components (overrides variables when provided)
         
         Returns:
             Tuple of (success, response_data with message_id)
         """
-        
-        # Build components from variables
-        components = {}
-        
-        if variables:
-            # Build body components
-            for key, value in variables.items():
-                if key.startswith('body_'):
-                    components[key] = {
-                        "type": "text",
-                        "value": str(value)
-                    }
-                elif key.startswith('header_'):
-                    components[key] = {
-                        "type": "text",
-                        "value": str(value)
-                    }
-        
+        recipient = self.normalize_recipient_number(recipient_number)
+        if not recipient:
+            return False, {"error": "invalid recipient number"}
+
+        if components is None:
+            components = self.build_template_components(variables)
+
+        template_payload: Dict[str, Any] = {
+            "name": template_name,
+            "language": {
+                "code": "en",
+                "policy": "deterministic",
+            },
+            "to_and_components": [
+                {
+                    "to": [recipient],
+                    "components": components,
+                }
+            ],
+        }
+        namespace = self._template_namespace()
+        if namespace:
+            template_payload["namespace"] = namespace
+
         payload = json.dumps({
             "integrated_number": self.integrated_number,
             "content_type": "template",
             "payload": {
                 "messaging_product": "whatsapp",
                 "type": "template",
-                "template": {
-                    "name": template_name,
-                    "language": {
-                        "code": "en",
-                        "policy": "deterministic"
-                    },
-                    "namespace": None,
-                    "to_and_components": [
-                        {
-                            "to": [recipient_number],
-                            "components": components
-                        }
-                    ]
-                }
+                "template": template_payload,
             }
         })
         
@@ -280,36 +330,39 @@ class MSG91WhatsAppService:
         to_and_components = []
         
         for idx, recipient in enumerate(recipient_numbers):
-            components = {}
-            
+            recipient = self.normalize_recipient_number(recipient)
+            if not recipient:
+                continue
+
             if variables_list and idx < len(variables_list):
-                variables = variables_list[idx]
-                for key, value in variables.items():
-                    components[key] = {
-                        "type": "text",
-                        "value": str(value)
-                    }
-            
+                components = self.build_template_components(variables_list[idx])
+            else:
+                components = {}
+
             to_and_components.append({
                 "to": [recipient],
-                "components": components
+                "components": components,
             })
-        
+
+        template_payload: Dict[str, Any] = {
+            "name": template_name,
+            "language": {
+                "code": "en",
+                "policy": "deterministic",
+            },
+            "to_and_components": to_and_components,
+        }
+        namespace = self._template_namespace()
+        if namespace:
+            template_payload["namespace"] = namespace
+
         payload = json.dumps({
             "integrated_number": self.integrated_number,
             "content_type": "template",
             "payload": {
                 "messaging_product": "whatsapp",
                 "type": "template",
-                "template": {
-                    "name": template_name,
-                    "language": {
-                        "code": "en",
-                        "policy": "deterministic"
-                    },
-                    "namespace": None,
-                    "to_and_components": to_and_components
-                }
+                "template": template_payload,
             }
         })
         

@@ -555,11 +555,24 @@ class RefreshView(TokenRefreshView):
                         {'detail': 'user is inactive pls contact support'},
                         status=status.HTTP_403_FORBIDDEN
                     )
+            except User.DoesNotExist:
+                # User was deleted but token still exists
+                return Response(
+                    {'detail': 'User account no longer exists'},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
             except Exception:
                 # If token is invalid, let super().post() handle it
                 pass
         
-        response = super().post(request, *args, **kwargs)
+        try:
+            response = super().post(request, *args, **kwargs)
+        except User.DoesNotExist:
+            # Handle case where user is deleted but JWT library tries to fetch them
+            return Response(
+                {'detail': 'User account no longer exists'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
         
         if response.status_code == status.HTTP_200_OK and isinstance(response.data, dict):
             access = response.data.get('access')

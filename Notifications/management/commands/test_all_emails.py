@@ -16,9 +16,8 @@ from django.utils import timezone
 
 from Notifications.email_service import EmailService
 from Notifications.tasks import (
-    _send_order_confirmed_email_to,
-    _send_order_delivered_email_to,
-    _send_otp_verification_email_to,
+    send_order_confirmed_email,
+    send_order_delivered_email,
 )
 from Orders.models import Order, OrderItem, Payment, Receipt
 from Users.models import UserAddress
@@ -80,7 +79,13 @@ class Command(BaseCommand):
             self.stdout.write(f"{mark} {label}: {response}")
             results.append((label, success))
 
-        ok, res = _send_otp_verification_email_to(recipient, user, "123456")
+        ok, res = EmailService.send(
+            recipient_email=recipient,
+            subject="[TEST] Your Verification Code",
+            plain_message="Your verification code is: 123456",
+            html_template="Notifications/emails/otp_verification.html",
+            template_context={"user": user, "otp_code": "123456"},
+        )
         record("OTP verification", ok, res)
 
         ok, res = EmailService.send(
@@ -124,8 +129,8 @@ class Command(BaseCommand):
 
         order.status = Order.OrderStatus.PAID
         order.save(update_fields=["status"])
-        ok, res = _send_order_confirmed_email_to(recipient, order)
-        record("Order confirmed (PAID)", ok, res)
+        res = send_order_confirmed_email(order.id)
+        record("Order confirmed (PAID)", "sent" in str(res).lower(), res)
 
         for status, headline in [
             (Order.OrderStatus.PROCESSING, "Order is being prepared"),
@@ -151,8 +156,8 @@ class Command(BaseCommand):
 
         order.status = Order.OrderStatus.DELIVERED
         order.save(update_fields=["status"])
-        ok, res = _send_order_delivered_email_to(recipient, order)
-        record("Order delivered", ok, res)
+        res = send_order_delivered_email(order.id)
+        record("Order delivered", "sent" in str(res).lower(), res)
 
         order.status = Order.OrderStatus.CANCELLED
         order.save(update_fields=["status"])

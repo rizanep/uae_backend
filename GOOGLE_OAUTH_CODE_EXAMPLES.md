@@ -185,7 +185,7 @@ import { useAuth } from '../context/AuthContext';
 import '../styles/LoginPage.css';
 
 const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || 
-  '850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleusercontent.com';
+  '470304276733-kt1v78349g2kecepe4dpl1371jvdpb6k.apps.googleusercontent.com';
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -390,7 +390,7 @@ export default App;
 **.env**
 ```env
 REACT_APP_API_URL=http://localhost:8000/api
-REACT_APP_GOOGLE_CLIENT_ID=850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleusercontent.com
+REACT_APP_GOOGLE_CLIENT_ID=470304276733-kt1v78349g2kecepe4dpl1371jvdpb6k.apps.googleusercontent.com
 ```
 
 ---
@@ -491,7 +491,7 @@ export function GoogleLoginButton() {
   };
 
   return (
-    <GoogleOAuthProvider clientId="850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleusercontent.com">
+    <GoogleOAuthProvider clientId="470304276733-kt1v78349g2kecepe4dpl1371jvdpb6k.apps.googleusercontent.com">
       <div className="login-container">
         {error && <div className="error">{error}</div>}
         <GoogleLogin
@@ -706,7 +706,7 @@ function handleGoogleError() {
 **.env.local**
 ```env
 VITE_API_URL=http://localhost:8000/api
-VITE_GOOGLE_CLIENT_ID=850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleusercontent.com
+VITE_GOOGLE_CLIENT_ID=470304276733-kt1v78349g2kecepe4dpl1371jvdpb6k.apps.googleusercontent.com
 ```
 
 ---
@@ -782,7 +782,7 @@ VITE_GOOGLE_CLIENT_ID=850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleu
     <div id="error-message" class="error"></div>
 
     <div id="g_id_onload"
-         data-client_id="850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleusercontent.com"
+         data-client_id="470304276733-kt1v78349g2kecepe4dpl1371jvdpb6k.apps.googleusercontent.com"
          data-callback="handleCredentialResponse">
     </div>
     <div class="g_id_signin" data-type="standard" data-size="large"></div>
@@ -844,7 +844,7 @@ window.handleCredentialResponse = async function (response) {
 // Initialize Google Sign-In
 window.onload = function () {
   google.accounts.id.initialize({
-    client_id: '850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleusercontent.com',
+    client_id: '470304276733-kt1v78349g2kecepe4dpl1371jvdpb6k.apps.googleusercontent.com',
   });
 
   google.accounts.id.renderButton(
@@ -1176,7 +1176,7 @@ export class LoginComponent {
   ngOnInit(): void {
     google.accounts.id.initialize({
       client_id:
-        '850588370229-jtaul330kpqmi0m239itt4jrodshko78.apps.googleusercontent.com',
+        '470304276733-kt1v78349g2kecepe4dpl1371jvdpb6k.apps.googleusercontent.com',
       callback: this.handleLogin.bind(this),
     });
 
