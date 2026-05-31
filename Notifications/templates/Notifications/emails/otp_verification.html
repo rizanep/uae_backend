@@ -5,7 +5,7 @@
 {% block page_title %}Email Verification Code{% endblock %}
 
 {% block content %}
-<div class="highlight">
+<div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; border-left: 4px solid #ffc107; margin: 15px 0;">
     <h2>🔐 Verify Your Email Address</h2>
     <p>Hello {{ user.first_name|default:"there" }}!</p>
     <p>Thank you for choosing Simak Fresh. To complete your verification, please use the code below:</p>
@@ -28,7 +28,7 @@
 </div>
 
 {% comment %} <p style="text-align: center; margin: 30px 0;">
-    <a href="{{ site_url }}/verify-email?code={{ otp_code }}" class="button" style="background-color: #007bff;">Verify Email</a>
+    <a href="{{ site_url }}/verify-email?code={{ otp_code }}" style="display: inline-block; background-color: #007bff; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: 600;">Verify Email</a>
 </p> {% endcomment %}
 
 <p style="color: #6c757d; font-size: 14px; text-align: center;">

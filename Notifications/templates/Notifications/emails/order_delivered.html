@@ -5,7 +5,7 @@
 {% block page_title %}Your Order Has Been Delivered!{% endblock %}
 
 {% block content %}
-<div class="highlight">
+<div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; border-left: 4px solid #ffc107; margin: 15px 0;">
     <h2>🚚 Order Delivered Successfully</h2>
     <p>Dear {{ order.user.first_name|default:order.user.email }},</p>
     <p>Great news! Your order has been successfully delivered to your doorstep.</p>
@@ -33,7 +33,7 @@
     <h3>What Was Delivered:</h3>
     <div style="border: 1px solid #dee2e6; border-radius: 5px; overflow: hidden;">
         {% for item in order.items.all %}
-        <div style="padding: 15px; border-bottom: 1px solid #dee2e6; {% if forloop.last %}border-bottom: none;{% endif %}">
+        <div{% if forloop.last %} style="padding: 15px;"{% else %} style="padding: 15px; border-bottom: 1px solid #dee2e6;"{% endif %}>
             <div style="display: flex; justify-content: space-between; align-items: center;">
                 <div>
                     <strong>{{ item.product_name }}</strong>
@@ -54,12 +54,12 @@
     <p>We hope you enjoyed your fresh products from Simak Fresh! Your feedback helps us improve our service.</p>
 
     <div style="text-align: center; margin: 20px 0;">
-        <a href="{{ site_url }}/feedback?order={{ order.id }}" class="button" style="background-color: #ffc107; color: #212529;">Leave Feedback</a>
+        <a href="{{ site_url }}/feedback?order={{ order.id }}" style="display: inline-block; background-color: #ffc107; color: #212529; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: 600;">Leave Feedback</a>
     </div>
 </div>
 
 <div style="text-align: center; margin: 30px 0;">
-    <a href="{{ site_url }}/orders/{{ order.id }}" class="button">View Order Details</a>
+    <a href="{{ site_url }}/orders/{{ order.id }}" style="display: inline-block; background-color: #28a745; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: 600;">View Order Details</a>
 </div>
 
 <div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ffc107;">

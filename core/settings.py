@@ -10,6 +10,12 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-+k1wieh3+)u!+gl^+2ck)
 
 DEBUG = os.environ.get('DEBUG', 'True').lower() == 'true'
 
+# OTP test accounts: fixed code only for listed emails/phones (set TEST_USER_ENABLED=false in production)
+TEST_USER_ENABLED = os.environ.get('TEST_USER_ENABLED', 'false').lower() == 'true'
+TEST_USER_EMAILS = os.environ.get('TEST_USER_EMAILS', '')
+TEST_USER_PHONES = os.environ.get('TEST_USER_PHONES', '')
+TEST_USER_OTP = os.environ.get('TEST_USER_OTP', '000000')
+
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '187.77.189.139,72.61.243.154,localhost,127.0.0.1,https://uae-ecom-project-six.vercel.app/').split(',')
 
 
@@ -138,7 +144,7 @@ SITE_URL = os.environ.get('SITE_URL', 'https://simakfresh.ae')
 APP_NAME = os.environ.get('APP_NAME', 'Simak Fresh')
 STORE_MOTTO = os.environ.get('STORE_MOTTO', 'Live Seafood from SEA to HOME')
 SUPPORT_EMAIL = os.environ.get('SUPPORT_EMAIL', 'support@simakfresh.ae')
-# Email branding (real PNG at media/branding/email_logo.png — must be publicly served)
+# Email branding (PNG at media/branding/email_logo.png — must be publicly served)
 _default_logo_url = f"{SITE_URL.rstrip('/')}/media/branding/email_logo.png"
 EMAIL_LOGO_URL = os.environ.get('EMAIL_LOGO_URL', '').strip() or _default_logo_url
 EMAIL_LOGO_PATH = os.environ.get('EMAIL_LOGO_PATH', '').strip() or str(BASE_DIR / 'media' / 'branding' / 'email_logo.png')

@@ -2,12 +2,11 @@ from django.contrib.auth import authenticate
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from .models import User, UserProfile, OTPToken, UserAddress, DeliveryBoyProfile
-from .test_auth import get_test_user_otp, is_test_user_email
 from django.utils import timezone
 from datetime import timedelta
-import random
 from .tasks import send_email_task
 from django.conf import settings
+from .otp_utils import generate_otp_code
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
@@ -293,24 +292,13 @@ class OTPRequestSerializer(serializers.Serializer):
             )
             is_new_user = True
 
-        # Generate a secure OTP only when real delivery channel is enabled.
-        use_real_phone_otp = (
-            getattr(settings, 'USE_REAL_TWILIO_OTP', False)
-            or getattr(settings, 'USE_REAL_MSG91_SMS', False)
-            or getattr(settings, 'USE_REAL_MSG91_WHATSAPP', False)
+        code = generate_otp_code(
+            otp_type=otp_type,
+            email=email,
+            phone_number=phone_number,
         )
-        # use_real_email_otp = getattr(settings, 'USE_REAL_SMTP', False)
-        use_real_email_otp = True  # Always generate real OTP for email to prevent abuse, even if email sending is disabled (we can still show OTP in API response for testing)
 
-        should_use_real_otp = (otp_type == 'phone' and use_real_phone_otp) or (otp_type == 'email' and use_real_email_otp)
-        if otp_type == 'email' and is_test_user_email(email):
-            code = get_test_user_otp()
-        elif should_use_real_otp:
-            code = str(random.randint(100000, 999999))
-        else:
-            code = "000000"
-            
-        # Save OTP to database      
+        # Save OTP to database
         if not user:
             raise serializers.ValidationError("User not found. Please register first.")
 
@@ -348,17 +336,10 @@ class OTPLoginSerializer(serializers.Serializer):
     otp_type = serializers.ChoiceField(choices=[('email', 'Email'), ('phone', 'Phone')])
 
     def validate(self, attrs):
-        from .test_auth import get_or_create_test_user, is_test_user_login
-
         email = attrs.get('email')
         phone_number = attrs.get('phone_number')
         otp_code = attrs.get('otp_code')
         otp_type = attrs.get('otp_type')
-
-        if is_test_user_login(email, phone_number, otp_type, otp_code):
-            attrs['user'] = get_or_create_test_user(email)
-            attrs['is_test_login'] = True
-            return attrs
 
         user = None
         if otp_type == 'email':

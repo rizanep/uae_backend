@@ -2,38 +2,33 @@
 
 {% block title %}Product Back in Stock - Simak Fresh{% endblock %}
 
-{% block page_title %}Great News! Product Back in Stock{% endblock %}
+{% block page_title %}Product Back in Stock{% endblock %}
 
 {% block content %}
-<div class="highlight">
-    <h2>🎉 Good news, {{ user.first_name|default:user.email }}!</h2>
-    <p>The product you've been waiting for is now back in stock!</p>
+<div style="background-color: #fff3cd; padding: 15px; border-radius: 5px; border-left: 4px solid #ffc107; margin: 15px 0;">
+    <h2>🎉 Back in Stock</h2>
+    <p>Dear {{ user.first_name|default:user.email }},</p>
+    <p>Great news! The product you were waiting for is available again.</p>
 </div>
 
-<div style="margin: 20px 0;">
-    <h3>Product Details:</h3>
-    <p><strong>{{ product_name }}</strong></p>
-
-    <p>We're excited to let you know that <strong>{{ product_name }}</strong> is now available in our inventory again.</p>
-
-    <p>Don't miss out - head to our app and place your order now!</p>
-
-    <div style="text-align: center; margin: 30px 0;">
-        <a href="{{ site_url }}/products" class="button">Shop Now</a>
-    </div>
-
-    <p style="color: #6c757d; font-size: 14px;">
-        You received this notification because you requested to be notified when this product became available again.
+<div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+    <h3 style="margin-top: 0; color: #28a745;">Product Details:</h3>
+    <p style="margin: 0;"><strong>{{ product_name }}</strong></p>
+    <p style="margin: 12px 0 0; color: #495057;">
+        <strong>{{ product_name }}</strong> is now available in our inventory. Place your order before it sells out again.
     </p>
 </div>
 
+<div style="text-align: center; margin: 30px 0;">
+    <a href="{{ site_url }}/products" style="display: inline-block; background-color: #28a745; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: 600;">Shop Now</a>
+</div>
+
+<p style="color: #6c757d; font-size: 14px;">
+    You received this email because you asked to be notified when this product was back in stock.
+</p>
+
 <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
-    <h4>Why choose Simak Fresh?</h4>
-    <ul>
-        <li>✅ Fresh, high-quality products</li>
-        <li>✅ Fast delivery across UAE</li>
-        <li>✅ Secure online payments</li>
-        <li>✅ Excellent customer service</li>
-    </ul>
+    <h4 style="margin-top: 0;">Need help?</h4>
+    <p style="margin: 0;">Our customer service team is happy to assist with your order.</p>
 </div>
 {% endblock %}
