@@ -1,0 +1,21 @@
+{% extends "Notifications/emails/base.html" %}
+
+{% block title %}{{ subject_line }} - Simak Fresh{% endblock %}
+
+{% block page_title %}{{ headline }}{% endblock %}
+
+{% block content %}
+<div class="highlight">
+    <h2>{{ headline }}</h2>
+    <p>Hello,</p>
+    <p>{{ body_message }}</p>
+</div>
+
+<div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
+    <p style="margin: 0;"><strong>Time:</strong> {{ deletion_time }}</p>
+</div>
+
+<p>If you did not request this action, please contact us at
+    <a href="mailto:{{ support_email }}">{{ support_email }}</a>.
+</p>
+{% endblock %}

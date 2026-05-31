@@ -1,0 +1,67 @@
+{% extends "Notifications/emails/base.html" %}
+
+{% block title %}Payment Receipt - Simak Fresh{% endblock %}
+
+{% block page_title %}Payment Receipt{% endblock %}
+
+{% block content %}
+<div class="highlight">
+    <h2>Payment received</h2>
+    <p>Hi {{ user_name }},</p>
+    <p>Your payment for order <strong>#{{ order.id }}</strong> was successful. Your official receipt is attached as a PDF.</p>
+</div>
+
+<div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+    <table style="width: 100%; border-collapse: collapse;">
+        <tr>
+            <td style="padding: 8px 0;"><strong>Receipt number:</strong></td>
+            <td style="padding: 8px 0;">{{ receipt_number }}</td>
+        </tr>
+        <tr>
+            <td style="padding: 8px 0;"><strong>Amount paid:</strong></td>
+            <td style="padding: 8px 0; color: #28a745; font-weight: bold;">AED {{ payment.amount }}</td>
+        </tr>
+        <tr>
+            <td style="padding: 8px 0;"><strong>Issued at:</strong></td>
+            <td style="padding: 8px 0;">{{ issued_at }}</td>
+        </tr>
+        <tr>
+            <td style="padding: 8px 0;"><strong>Payment method:</strong></td>
+            <td style="padding: 8px 0;">{{ payment.get_payment_method_display }}</td>
+        </tr>
+    </table>
+</div>
+
+{% if order.items.all %}
+<div style="margin: 20px 0;">
+    <h3 style="margin-top: 0;">Order summary</h3>
+    <table style="width: 100%; border-collapse: collapse; border: 1px solid #dee2e6;">
+        <thead>
+            <tr style="background-color: #e9ecef;">
+                <th style="padding: 10px; text-align: left;">Item</th>
+                <th style="padding: 10px; text-align: center;">Qty</th>
+                <th style="padding: 10px; text-align: right;">Subtotal</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in order.items.all %}
+            <tr>
+                <td style="padding: 10px; border-top: 1px solid #dee2e6;">{{ item.product_name }}</td>
+                <td style="padding: 10px; border-top: 1px solid #dee2e6; text-align: center;">{{ item.quantity }}</td>
+                <td style="padding: 10px; border-top: 1px solid #dee2e6; text-align: right;">AED {{ item.subtotal }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<div style="background-color: #e7f3ff; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #28a745;">
+    <p style="margin: 0;"><strong>PDF receipt attached</strong></p>
+    <p style="margin: 8px 0 0;">Open the attachment <strong>{{ receipt_filename }}</strong> for the full printable receipt with all order details.</p>
+</div>
+
+<div style="text-align: center; margin: 30px 0;">
+    <a href="{{ site_url }}/orders/{{ order.id }}" class="button">View order online</a>
+</div>
+{% endblock %}

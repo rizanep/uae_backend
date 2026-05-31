@@ -1,0 +1,34 @@
+{% extends "Notifications/emails/base.html" %}
+
+{% block title %}{{ subject_line }} - Simak Fresh{% endblock %}
+
+{% block page_title %}{{ headline }}{% endblock %}
+
+{% block content %}
+<div class="highlight">
+    <h2>{{ headline }}</h2>
+    <p>Hi {{ user_name }},</p>
+    <p>{{ body_message }}</p>
+</div>
+
+<div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+    <table style="width: 100%; border-collapse: collapse;">
+        <tr>
+            <td style="padding: 8px 0;"><strong>Order ID:</strong></td>
+            <td style="padding: 8px 0;">#{{ order.id }}</td>
+        </tr>
+        <tr>
+            <td style="padding: 8px 0;"><strong>Status:</strong></td>
+            <td style="padding: 8px 0;">{{ status_label }}</td>
+        </tr>
+        <tr>
+            <td style="padding: 8px 0;"><strong>Total:</strong></td>
+            <td style="padding: 8px 0;">AED {{ order.total_amount }}</td>
+        </tr>
+    </table>
+</div>
+
+<div style="text-align: center; margin: 30px 0;">
+    <a href="{{ site_url }}/orders/{{ order.id }}" class="button">View order</a>
+</div>
+{% endblock %}

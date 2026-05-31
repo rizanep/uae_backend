@@ -135,6 +135,13 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 # Site URL for emails and links
 SITE_URL = os.environ.get('SITE_URL', 'https://simakfresh.ae')
+APP_NAME = os.environ.get('APP_NAME', 'Simak Fresh')
+STORE_MOTTO = os.environ.get('STORE_MOTTO', 'Live Seafood from SEA to HOME')
+SUPPORT_EMAIL = os.environ.get('SUPPORT_EMAIL', 'support@simakfresh.ae')
+# Email branding (real PNG at media/branding/email_logo.png — must be publicly served)
+_default_logo_url = f"{SITE_URL.rstrip('/')}/media/branding/email_logo.png"
+EMAIL_LOGO_URL = os.environ.get('EMAIL_LOGO_URL', '').strip() or _default_logo_url
+EMAIL_LOGO_PATH = os.environ.get('EMAIL_LOGO_PATH', '').strip() or str(BASE_DIR / 'media' / 'branding' / 'email_logo.png')
 
 # Twilio Configuration
 TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID')
@@ -142,6 +149,16 @@ TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN')
 TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '918281740483')
 # Toggle real Twilio SMS sending for OTPs (False => use console + 000000)
 USE_REAL_TWILIO_OTP = os.environ.get('USE_REAL_TWILIO_OTP', 'false').lower() == 'true'
+
+# Fixed test account for OTP login (email + static OTP). Keep disabled in production.
+TEST_USER_ENABLED = os.environ.get('TEST_USER_ENABLED', 'false').lower() == 'true'
+TEST_USER_EMAIL = os.environ.get('TEST_USER_EMAIL', '').strip().lower()
+TEST_USER_EMAILS = [
+    email.strip().lower()
+    for email in os.environ.get('TEST_USER_EMAILS', '').split(',')
+    if email.strip()
+]
+TEST_USER_OTP = os.environ.get('TEST_USER_OTP', '000000').strip()
 
 # Google OAuth credentials (moved to environment variables)
 GOOGLE_OAUTH_CLIENT_ID = os.environ.get('GOOGLE_OAUTH_CLIENT_ID')
@@ -371,6 +388,12 @@ MSG91_STOCK_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_STOCK_WHATSAPP_TEMPLA
 # Admin broadcast notification templates
 MSG91_ADMIN_NOTIFICATION_SMS_TEMPLATE_ID = os.environ.get('MSG91_ADMIN_NOTIFICATION_SMS_TEMPLATE_ID', '')
 MSG91_ADMIN_NOTIFICATION_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_ADMIN_NOTIFICATION_WHATSAPP_TEMPLATE_NAME', '')
+
+# Admin order alert when order is paid (WhatsApp)
+ADMIN_ORDER_WHATSAPP_PHONE = os.environ.get('ADMIN_ORDER_WHATSAPP_PHONE', '')
+MSG91_ADMIN_ORDER_WHATSAPP_TEMPLATE_NAME = os.environ.get(
+    'MSG91_ADMIN_ORDER_WHATSAPP_TEMPLATE_NAME', 'admin_order_notification'
+)
 
 # Review request templates (sent after delivery)
 MSG91_REVIEW_REQUEST_SMS_TEMPLATE_ID = os.environ.get('MSG91_REVIEW_REQUEST_SMS_TEMPLATE_ID', '')

@@ -177,7 +177,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
     product_image = serializers.SerializerMethodField()
     product_unit = serializers.CharField(source="product.unit", read_only=True)
     product_unit_display = serializers.CharField(source="product.get_unit_display", read_only=True)
-    total_with_preparation = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    preparation_specification_name = serializers.SerializerMethodField()
 
     class Meta:
         model = OrderItem
@@ -195,9 +195,8 @@ class OrderItemSerializer(serializers.ModelSerializer):
             "preparation_specification_name",
             "preparation_extra_price",
             "preparation_instructions",
-            "total_with_preparation",
         ]
-        read_only_fields = ["preparation_specification_name", "preparation_extra_price", "total_with_preparation"]
+        read_only_fields = fields
 
     def get_product_image(self, obj):
         if obj.product and obj.product.image:
@@ -206,6 +205,12 @@ class OrderItemSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.product.image.url)
             return obj.product.image.url
         return None
+
+    def get_preparation_specification_name(self, obj):
+        """Get preparation specification name from the related object or stored snapshot."""
+        if obj.preparation_specification:
+            return obj.preparation_specification.name
+        return obj.preparation_specification_name or ""
 
 
 class OrderSerializer(serializers.ModelSerializer):
@@ -251,8 +256,9 @@ class OrderSerializer(serializers.ModelSerializer):
         if obj.shipping_address:
             return UserAddressSerializer(obj.shipping_address, context=self.context).data
 
-        if isinstance(obj.shipping_address_snapshot, dict):
-            return obj.shipping_address_snapshot
+        shipping_snapshot = getattr(obj, 'shipping_address_snapshot', None)
+        if isinstance(shipping_snapshot, dict):
+            return shipping_snapshot
 
         return None
 

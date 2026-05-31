@@ -4,6 +4,7 @@ from django.dispatch import receiver
 from .models import Order, OrderStatusHistory, Payment, Receipt
 from Notifications.models import Notification
 from Notifications.tasks import (
+    send_admin_order_whatsapp_notification,
     send_order_status_multichannel_notification,
     send_payment_receipt_multichannel_notification,
     send_order_pending_reminder_whatsapp,
@@ -86,7 +87,6 @@ def send_order_status_notification(sender, instance, created, **kwargs):
                 countdown=120,
             )
         )
-
     else:
         old_status = getattr(instance, '_old_status', None)
         if old_status and old_status != instance.status:
@@ -100,6 +100,12 @@ def send_order_status_notification(sender, instance, created, **kwargs):
             transaction.on_commit(
                 lambda order_id=instance.id: send_order_status_multichannel_notification.delay(order_id)
             )
+            if instance.status == Order.OrderStatus.PAID:
+                transaction.on_commit(
+                    lambda order_id=instance.id: send_admin_order_whatsapp_notification.delay(
+                        order_id
+                    )
+                )
 
 @receiver(post_save, sender=Payment)
 def handle_payment_success(sender, instance, **kwargs):

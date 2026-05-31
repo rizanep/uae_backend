@@ -132,18 +132,18 @@ class Order(models.Model):
         choices=OrderStatus.choices,
         default=OrderStatus.PENDING,
     )
+    shipping_address_snapshot = models.JSONField(
+        _("shipping address snapshot"),
+        null=True,
+        blank=True,
+        help_text=_("Frozen copy of shipping address to preserve order history if address is deleted."),
+    )
     shipping_address = models.ForeignKey(
         UserAddress,
         on_delete=models.SET_NULL,
         null=True,
         related_name="orders",
         verbose_name=_("shipping address"),
-    )
-    shipping_address_snapshot = models.JSONField(
-        _("shipping address snapshot"),
-        null=True,
-        blank=True,
-        help_text=_("Frozen copy of shipping address to preserve order history if address is deleted."),
     )
     total_amount = models.DecimalField(_("total amount"), max_digits=12, decimal_places=2)
     tip_amount = models.DecimalField(_("tip amount"), max_digits=10, decimal_places=2, default=Decimal("0.00"))
@@ -182,6 +182,25 @@ class Order(models.Model):
     def __str__(self):
         return f"Order #{self.id} by {self.user}"
 
+
+
+    def restock_items(self):
+        """Restore product stock for all line items that still reference a product."""
+        for item in self.items.select_related("product").all():
+            if item.product_id:
+                product = item.product
+                product.stock += item.quantity
+                product.save(update_fields=["stock"])
+
+    def can_transition_to(self, new_status):
+        """Cancelled orders cannot move back to any other status."""
+        if (
+            self.status == self.OrderStatus.CANCELLED
+            and new_status != self.OrderStatus.CANCELLED
+        ):
+            return False
+        return True
+
     @staticmethod
     def build_shipping_address_snapshot(address):
         if not address:
@@ -213,13 +232,24 @@ class Order(models.Model):
         # Backward-compatible safety net for non-checkout order creation paths.
         if self.shipping_address_id and not self.shipping_address_snapshot:
             self.shipping_address_snapshot = self.build_shipping_address_snapshot(self.shipping_address)
+        
+        # Check for cancelled order status transitions
+        if self.pk:
+            old_status = (
+                Order.objects.filter(pk=self.pk)
+                .values_list("status", flat=True)
+                .first()
+            )
+            if (
+                old_status == self.OrderStatus.CANCELLED
+                and self.status != self.OrderStatus.CANCELLED
+            ):
+                raise ValidationError(_("Cannot change status of a cancelled order."))
+        
         super().save(*args, **kwargs)
-
-
 class OrderItem(models.Model):
     """
     Individual items within an order.
-    Tracks product details, quantity, price, and preparation specifications.
     """
     order = models.ForeignKey(
         Order,
@@ -237,6 +267,7 @@ class OrderItem(models.Model):
     product_name = models.CharField(_("product name"), max_length=255)
     quantity = models.PositiveIntegerField(_("quantity"))
     price = models.DecimalField(_("price"), max_digits=10, decimal_places=2)
+
 
     # Preparation Specification Fields
     preparation_specification = models.ForeignKey(
@@ -267,7 +298,6 @@ class OrderItem(models.Model):
         null=True,
         help_text=_("Additional custom instructions provided by the user"),
     )
-
     class Meta:
         verbose_name = _("Order Item")
         verbose_name_plural = _("Order Items")
@@ -277,58 +307,6 @@ class OrderItem(models.Model):
         if self.price is None or self.quantity is None:
             return Decimal("0.00")
         return self.price * self.quantity
-
-    @property
-    def total_with_preparation(self):
-        """Calculate total including preparation extra price."""
-        base_total = self.subtotal
-        extra_cost = (self.preparation_extra_price or Decimal("0.00")) * self.quantity
-        return base_total + extra_cost
-    
-    def clean(self):
-        """Validate preparation specification if product requires it."""
-        from django.core.exceptions import ValidationError
-        from Products.models import ProductPreparationSpecification
-        
-        # Check if product has active preparation specs
-        if self.product:
-            has_active_specs = ProductPreparationSpecification.objects.filter(
-                product=self.product,
-                is_active=True
-            ).exists()
-            
-            if has_active_specs and not self.preparation_specification:
-                raise ValidationError({
-                    'preparation_specification': 'Preparation specification is required for this product.'
-                })
-            
-            # Validate spec belongs to this product
-            if self.preparation_specification and self.preparation_specification.product != self.product:
-                raise ValidationError({
-                    'preparation_specification': 'Preparation specification does not match this product.'
-                })
-            
-            # Verify spec is active
-            if self.preparation_specification and not self.preparation_specification.is_active:
-                raise ValidationError({
-                    'preparation_specification': 'This preparation option is no longer available.'
-                })
-    
-    def save(self, *args, **kwargs):
-        """Save snapshots of preparation data at order time."""
-        self.full_clean()
-        if self.preparation_specification:
-            self.preparation_specification_name = self.preparation_specification.name
-            self.preparation_extra_price = self.preparation_specification.extra_price
-        else:
-            self.preparation_specification_name = ""
-            self.preparation_extra_price = Decimal("0.00")
-        
-        super().save(*args, **kwargs)
-
-    def __str__(self):
-        prep_str = f" ({self.preparation_specification_name})" if self.preparation_specification_name else ""
-        return f"Order #{self.order.id} - {self.product_name} x{self.quantity}{prep_str}"
 
 
 class OrderStatusHistory(models.Model):

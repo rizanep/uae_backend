@@ -362,7 +362,16 @@ class User(AbstractUser):
         return self.phone_number or f"User {self.pk}"
 
     def save(self, *args, **kwargs):
-        """Auto-generate referral code if not exists"""
+        """Auto-generate referral code if not exists and normalize emails to lowercase"""
+        # Normalize email to lowercase
+        if self.email:
+            self.email = self.email.lower()
+        
+        # Normalize google_email to lowercase
+        if self.google_email:
+            self.google_email = self.google_email.lower()
+        
+        # Auto-generate referral code if not exists
         if not self.referral_code:
             from Marketing.services import generate_referral_code
             self.referral_code = generate_referral_code()

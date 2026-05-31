@@ -45,7 +45,7 @@ class Category(SoftDeleteModel):
 class ProductUnit(models.TextChoices):
     PIECE = "piece", _("Piece")
     KG = "kg", _("Kg")
-    G = "Gram", _("g")
+    G = "100g", _("100g")
 
 
 DEFAULT_AVAILABLE_EMIRATES = [
