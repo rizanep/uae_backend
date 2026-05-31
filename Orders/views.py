@@ -1046,6 +1046,11 @@ class OrderViewSet(viewsets.ModelViewSet):
         if order.status == Order.OrderStatus.CANCELLED:
             return Response({"error": "Order is already cancelled."}, status=status.HTTP_400_BAD_REQUEST)
         if order.status == Order.OrderStatus.PENDING:
+<<<<<<< HEAD
+            order.restock_items()
+            order.status = Order.OrderStatus.CANCELLED
+            order.save(update_fields=["status", "updated_at"])
+=======
             # Restore stock — single query with select_related, then bulk_update
             items = list(order.items.select_related('product').all())
             products_to_update = []
@@ -1059,6 +1064,7 @@ class OrderViewSet(viewsets.ModelViewSet):
 
             order.status = Order.OrderStatus.CANCELLED
             order.save(update_fields=['status', 'updated_at'])
+>>>>>>> dev
             return Response({"message": "Order cancelled and stock restored."})
         return Response({"error": "Only pending orders can be cancelled."}, status=status.HTTP_400_BAD_REQUEST)
 

@@ -175,6 +175,12 @@ class PaymentSerializer(serializers.ModelSerializer):
 class OrderItemSerializer(serializers.ModelSerializer):
     subtotal = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     product_image = serializers.SerializerMethodField()
+<<<<<<< HEAD
+    unit = serializers.CharField(source='product.unit', read_only=True)
+    class Meta:
+        model = OrderItem
+        fields = ["id", "product", "product_name", "product_image", "quantity", "unit", "price", "subtotal"]
+=======
     product_unit = serializers.CharField(source="product.unit", read_only=True)
     product_unit_display = serializers.CharField(source="product.get_unit_display", read_only=True)
     preparation_specification_name = serializers.SerializerMethodField()

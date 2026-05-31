@@ -110,8 +110,19 @@ class UnifiedNotificationService:
         recipient_email: str,
         subject: str,
         message: str,
+        html_template: Optional[str] = None,
+        template_context: Optional[Dict] = None,
         html_message: Optional[str] = None,
     ) -> Tuple[bool, Dict]:
+<<<<<<< HEAD
+        return EmailService.send(
+            recipient_email=recipient_email,
+            subject=subject,
+            plain_message=message,
+            html_template=html_template,
+            template_context=template_context,
+        )
+=======
         if not recipient_email:
             return False, {"error": "missing recipient email"}
 
@@ -142,3 +153,4 @@ class UnifiedNotificationService:
         except Exception as exc:
             logger.exception("Email send exception", extra={"recipient_email": recipient_email})
             return False, {"error": str(exc)}
+>>>>>>> dev
