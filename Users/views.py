@@ -24,7 +24,7 @@ from google.oauth2 import id_token
 from .models import User, GoogleOAuthToken, OTPToken, UserProfile, UserAddress
 from .serializers import (
     UserSerializer, UserCreateSerializer, UserUpdateSerializer,
-    UserAdminSerializer, CustomTokenObtainPairSerializer,
+    UserAdminSerializer, CustomTokenObtainPairSerializer, SafeTokenRefreshSerializer,
     ChangePasswordSerializer, GoogleOAuthSerializer,
     OTPRequestSerializer, OTPLoginSerializer, VerifyNewContactSerializer,
     DeliveryBoyCreateSerializer, DeliveryBoyUpdateSerializer
@@ -535,45 +535,52 @@ class RefreshView(TokenRefreshView):
     - Sets new access token in cookie
     """
     permission_classes = [permissions.AllowAny]
-    
-    def post(self, request, *args, **kwargs):
-        # Check if refresh token is in cookies
-        if 'refresh' not in request.data and COOKIE_REFRESH_NAME in request.COOKIES:
+    serializer_class = SafeTokenRefreshSerializer
+
+    def _resolve_refresh_token(self, request):
+        return request.data.get("refresh") or request.COOKIES.get(COOKIE_REFRESH_NAME)
+
+    def _inject_refresh_into_request(self, request, refresh_token):
+        if not refresh_token:
+            return
+        try:
             data = request.data.copy()
-            data['refresh'] = request.COOKIES.get(COOKIE_REFRESH_NAME)
-            request._full_data = data
-        
-        # Check user active status from refresh token
-        refresh_token = request.data.get('refresh')
+        except (TypeError, AttributeError):
+            data = dict(request.data)
+        data["refresh"] = refresh_token
+        request._full_data = data
+
+    def _auth_error_response(self, detail, status_code):
+        response = Response({"detail": detail}, status=status_code)
+        response.delete_cookie(COOKIE_ACCESS_NAME)
+        response.delete_cookie(COOKIE_REFRESH_NAME)
+        return response
+
+    def post(self, request, *args, **kwargs):
+        refresh_token = self._resolve_refresh_token(request)
+        self._inject_refresh_into_request(request, refresh_token)
+
         if refresh_token:
             try:
                 token = RefreshToken(refresh_token)
-                user_id = token['user_id']
-                user = User.objects.get(id=user_id)
+                user = User.objects.get(id=token["user_id"])
                 if not user.is_active:
-                    return Response(
-                        {'detail': 'user is inactive pls contact support'},
-                        status=status.HTTP_403_FORBIDDEN
+                    return self._auth_error_response(
+                        "user is inactive pls contact support",
+                        status.HTTP_403_FORBIDDEN,
                     )
             except User.DoesNotExist:
-                # User was deleted but token still exists
-                return Response(
-                    {'detail': 'User account no longer exists'},
-                    status=status.HTTP_401_UNAUTHORIZED
+                logger.warning("Refresh token for deleted user_id=%s", token["user_id"])
+                return self._auth_error_response(
+                    "User account no longer exists",
+                    status.HTTP_401_UNAUTHORIZED,
                 )
             except Exception:
-                # If token is invalid, let super().post() handle it
+                # Invalid/expired token — let serializer return proper 401
                 pass
-        
-        try:
-            response = super().post(request, *args, **kwargs)
-        except User.DoesNotExist:
-            # Handle case where user is deleted but JWT library tries to fetch them
-            return Response(
-                {'detail': 'User account no longer exists'},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
-        
+
+        response = super().post(request, *args, **kwargs)
+
         if response.status_code == status.HTTP_200_OK and isinstance(response.data, dict):
             access = response.data.get('access')
             

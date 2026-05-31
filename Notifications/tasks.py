@@ -31,8 +31,9 @@ def send_broadcast_push_task(broadcast_id):
     subject = broadcast.subject or (template.subject if template else None) or "Notification"
     message = broadcast.message or (template.body if template else "")
     if broadcast.image:
-        from django.conf import settings
-        image_url = settings.SITE_URL.rstrip("/") + broadcast.image.url
+        from .push_images import absolute_media_url
+
+        image_url = absolute_media_url(broadcast.image.url)
     else:
         image_url = None
 
@@ -705,9 +706,11 @@ def send_order_status_multichannel_notification(self, order_id):
             )
         results['channels']['email'] = {'success': email_success, 'response': email_response}
 
-    # FCM Push notification
+    # FCM Push notification (product image when order has line items with media)
     from .push_service import send_push_to_user
-    push_image = getattr(settings, 'ORDER_STATUS_PUSH_IMAGE_URL', None)
+    from .push_images import get_order_push_image_url
+
+    push_image = get_order_push_image_url(order)
     push_result = send_push_to_user(
         user=user,
         title=content['subject'],

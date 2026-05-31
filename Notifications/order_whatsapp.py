@@ -44,28 +44,9 @@ def resolve_order_status_whatsapp_template_name() -> str:
 
 def get_order_header_image_url(order) -> Optional[str]:
     """Absolute HTTPS URL for template header image."""
-    site = (getattr(settings, "SITE_URL", "") or "https://simakfresh.ae").rstrip("/")
+    from .push_images import get_order_push_image_url
 
-    first_item = (
-        order.items.select_related("product")
-        .filter(product__image__isnull=False)
-        .exclude(product__image="")
-        .first()
-    )
-    if first_item and first_item.product and first_item.product.image:
-        url = first_item.product.image.url
-        if url.startswith("http://") or url.startswith("https://"):
-            return url
-        return f"{site}{url}"
-
-    for fallback in (
-        getattr(settings, "MSG91_ORDER_STATUS_HEADER_IMAGE_URL", ""),
-        getattr(settings, "MSG91_ORDER_PENDING_HEADER_IMAGE_URL", ""),
-    ):
-        if fallback:
-            return str(fallback).strip()
-
-    return None
+    return get_order_push_image_url(order)
 
 
 def _format_delivery_line(order) -> str:

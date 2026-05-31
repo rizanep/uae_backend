@@ -1,6 +1,7 @@
 from django.contrib.auth import authenticate
 from rest_framework import serializers
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
+from rest_framework.exceptions import AuthenticationFailed
 from .models import User, UserProfile, OTPToken, UserAddress, DeliveryBoyProfile
 from django.utils import timezone
 from datetime import timedelta
@@ -233,6 +234,21 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         token['role'] = user.role
         token['email'] = user.email
         return token
+
+
+class SafeTokenRefreshSerializer(TokenRefreshSerializer):
+    """
+    Map missing/deleted users to 401 instead of an unhandled DoesNotExist (500).
+    """
+
+    def validate(self, attrs):
+        try:
+            return super().validate(attrs)
+        except User.DoesNotExist:
+            raise AuthenticationFailed(
+                "User account no longer exists",
+                code="user_not_found",
+            )
 
 
 class GoogleOAuthSerializer(serializers.Serializer):

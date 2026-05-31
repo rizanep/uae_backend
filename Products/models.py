@@ -141,6 +141,7 @@ class Product(SoftDeleteModel):
         from django.db import transaction
         from Notifications.tasks import send_stock_notification_email, send_stock_notification_whatsapp
         from Notifications.push_service import send_push_to_user
+        from Notifications.push_images import get_product_push_image_url
 
         # Get all pending notifications for this product
         pending_notifications = ProductNotification.objects.filter(
@@ -164,7 +165,8 @@ class Product(SoftDeleteModel):
                 user=user,
                 title="Product Back in Stock!",
                 body=f"Good news! {self.name} is now available.",
-                data={"product_id": self.id, "type": "stock_available"}
+                data={"product_id": str(self.id), "type": "stock_available"},
+                image=get_product_push_image_url(self),
             )
 
             # Mark as notified

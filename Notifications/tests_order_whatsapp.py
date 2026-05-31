@@ -44,8 +44,9 @@ class OrderWhatsAppHeaderImageTests(TestCase):
         User = get_user_model()
         user = User.objects.create_user(email="wa_test@example.com", password=None)
         order = Order.objects.create(user=user, total_amount=Decimal("10.00"), status="PENDING")
-        with patch("Notifications.order_whatsapp.settings") as mock_settings:
+        with patch("Notifications.push_images.settings") as mock_settings:
             mock_settings.SITE_URL = "https://simakfresh.ae"
+            mock_settings.ORDER_STATUS_PUSH_IMAGE_URL = ""
             mock_settings.MSG91_ORDER_STATUS_HEADER_IMAGE_URL = "https://simakfresh.ae/fallback.png"
             mock_settings.MSG91_ORDER_PENDING_HEADER_IMAGE_URL = ""
             url = get_order_header_image_url(order)
