@@ -3,12 +3,7 @@ from django.core.mail import EmailMultiAlternatives
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-<<<<<<< HEAD
-from twilio.rest import Client
-from twilio.base.exceptions import TwilioRestException
 from .email_service import EmailService
-=======
->>>>>>> dev
 from .models import ContactMessage, Notification
 from .services import UnifiedNotificationService
 from .push_service import send_push_to_tokens
@@ -215,19 +210,6 @@ Best regards,
 Support Team"""
 
     try:
-<<<<<<< HEAD
-        success, response = EmailService.send(
-            recipient_email=contact_msg.email,
-            subject=subject,
-            plain_message=plain_message,
-            html_template="Notifications/emails/contact_reply.html",
-            template_context={
-                "contact_name": contact_msg.name,
-                "original_message": contact_msg.message,
-                "reply_message": reply_message,
-                "is_resolved": mark_resolved,
-            },
-=======
         if not getattr(settings, "USE_REAL_SMTP", False):
             console_payload = {
                 "to": contact_msg.email,
@@ -237,7 +219,6 @@ Support Team"""
             }
             print(f"[EMAIL CONSOLE MODE] {console_payload}")
 
-            # Keep in-app behavior even when email transport is disabled.
             Notification.objects.create(
                 user=contact_msg.user,
                 title="Response to Your Message",
@@ -255,16 +236,6 @@ Support Team"""
 
             return f"Email disabled (console mode). Printed payload for {contact_msg.email}"
 
-        from Notifications.email_service import EmailService
-
-        subject = f"Re: {contact_msg.subject}"
-        plain_message = (
-            f"Dear {contact_msg.name},\n\n"
-            "Thank you for contacting us. Here's our response to your message:\n\n"
-            f'Your original message:\n"{contact_msg.message}"\n\n'
-            f"Our reply:\n{reply_message}\n\n"
-            "Best regards,\nSupport Team"
-        )
         success, response = EmailService.send(
             recipient_email=contact_msg.email,
             subject=subject,
@@ -280,19 +251,15 @@ Support Team"""
         if not success:
             return f"Failed to send reply email: {response}"
 
-        # Create in-app notification for the user
         Notification.objects.create(
             user=contact_msg.user,
             title="Response to Your Message",
             message=f"We have replied to your message: {contact_msg.subject}\n\n{reply_message[:100]}..."
         )
 
-        # Mark as resolved if requested
         if mark_resolved:
             contact_msg.is_resolved = True
             contact_msg.save()
-            
-            # Create notification about resolution
             Notification.objects.create(
                 user=contact_msg.user,
                 title="Your Message Has Been Resolved",
@@ -603,7 +570,6 @@ def _order_status_copy(order):
 
     status_messages = {
         'PENDING': {
-<<<<<<< HEAD
             'subject': f"Action Needed: Complete Payment for Order #{order.id}",
             'message': (
                 f"Hi {user_name}, your order #{order.id} is waiting for payment. "
@@ -613,11 +579,6 @@ def _order_status_copy(order):
             'html_template': 'Notifications/emails/order_status_update.html',
             'whatsapp_template': getattr(settings, 'MSG91_ORDER_PENDING_WHATSAPP_TEMPLATE_NAME', ''),
             'sms_template': getattr(settings, 'MSG91_ORDER_PENDING_SMS_TEMPLATE_ID', ''),
-=======
-            'subject': f"Order Status Updated: {status_label} (#{order.id})",
-            'message': f"Hi {user_name}, your order #{order.id} status is now {status_label}.",
-            'sms_template': 'order_status_pending',
->>>>>>> dev
         },
         'PAID': {
             'subject': f"Order Confirmed: #{order.id}",

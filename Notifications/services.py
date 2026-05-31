@@ -114,7 +114,8 @@ class UnifiedNotificationService:
         template_context: Optional[Dict] = None,
         html_message: Optional[str] = None,
     ) -> Tuple[bool, Dict]:
-<<<<<<< HEAD
+        from Notifications.email_service import EmailService
+
         return EmailService.send(
             recipient_email=recipient_email,
             subject=subject,
@@ -122,35 +123,3 @@ class UnifiedNotificationService:
             html_template=html_template,
             template_context=template_context,
         )
-=======
-        if not recipient_email:
-            return False, {"error": "missing recipient email"}
-
-        if not getattr(settings, "USE_REAL_SMTP", False):
-            return True, {"status": "skipped", "reason": "USE_REAL_SMTP is false"}
-
-        try:
-            if html_message:
-                # Send as HTML email using EmailMultiAlternatives
-                email = EmailMultiAlternatives(
-                    subject=subject,
-                    body=message,
-                    from_email=settings.DEFAULT_FROM_EMAIL,
-                    to=[recipient_email],
-                )
-                email.attach_alternative(html_message, "text/html")
-                email.send(fail_silently=False)
-            else:
-                # Send as plain text email
-                email = EmailMultiAlternatives(
-                    subject=subject,
-                    body=message,
-                    from_email=settings.DEFAULT_FROM_EMAIL,
-                    to=[recipient_email],
-                )
-                email.send(fail_silently=False)
-            return True, {"status": "sent"}
-        except Exception as exc:
-            logger.exception("Email send exception", extra={"recipient_email": recipient_email})
-            return False, {"error": str(exc)}
->>>>>>> dev
