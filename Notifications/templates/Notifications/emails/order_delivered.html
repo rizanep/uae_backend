@@ -20,7 +20,7 @@
         </tr>
         <tr>
             <td style="padding: 8px 0;"><strong>Delivered On:</strong></td>
-            <td style="padding: 8px 0;">{{ order.delivered_at|default:order.updated_at|date:"M d, Y \a\t h:i A" }}</td>
+            <td style="padding: 8px 0;">{{ order.updated_at|date:"M d, Y \a\t h:i A" }}</td>
         </tr>
         <tr>
             <td style="padding: 8px 0;"><strong>Total Amount:</strong></td>

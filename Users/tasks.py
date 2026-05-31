@@ -1,11 +1,27 @@
 from celery import shared_task
-from django.core.mail import send_mail
 from django.conf import settings
 from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
 
+from Notifications.email_service import EmailService
+
 
 @shared_task
+<<<<<<< HEAD
+def send_email_task(subject, message, recipient_list, from_email=None, html_message=None, html_template=None, template_context=None):
+  """Generic Celery email task — respects USE_REAL_SMTP via EmailService."""
+  if not isinstance(recipient_list, (list, tuple)):
+    recipient_list = [recipient_list]
+
+  results = []
+  for recipient in recipient_list:
+    success, response = EmailService.send(
+      recipient_email=recipient,
+      subject=subject,
+      plain_message=message,
+      html_template=html_template,
+      template_context=template_context,
+=======
 def send_email_task(subject, message, recipient_list, from_email=None, html_message=None):
     if not getattr(settings, "USE_REAL_SMTP", False):
         print(
@@ -22,7 +38,10 @@ def send_email_task(subject, message, recipient_list, from_email=None, html_mess
         from_email=from_email,
         recipient_list=recipient_list,
         html_message=html_message,
+>>>>>>> dev
     )
+    results.append({"recipient": recipient, "success": success, "response": response})
+  return results
 
 
 @shared_task

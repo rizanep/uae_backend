@@ -266,6 +266,9 @@ class OrderViewSet(viewsets.ModelViewSet):
         if not is_valid:
             return error_response
 
+        if order.status == Order.OrderStatus.CANCELLED:
+            return Response({'error': 'Cannot claim a cancelled order.'}, status=status.HTTP_400_BAD_REQUEST)
+
         if order.status not in [Order.OrderStatus.PAID, Order.OrderStatus.PROCESSING]:
             return Response({'error': 'Only paid or processing orders can be claimed.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -297,6 +300,9 @@ class OrderViewSet(viewsets.ModelViewSet):
         order = self.get_object()
         if request.user.role != 'delivery_boy':
             return Response({'error': 'Only delivery boys can update delivery status.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if order.status == Order.OrderStatus.CANCELLED:
+            return Response({'error': 'Cannot update a cancelled order.'}, status=status.HTTP_400_BAD_REQUEST)
 
         assignment = getattr(order, 'delivery_assignment', None)
         if not assignment or assignment.delivery_boy_id != request.user.id:
@@ -401,6 +407,9 @@ class OrderViewSet(viewsets.ModelViewSet):
         review_notes = request.data.get('review_notes', '')
 
         if decision == 'approve':
+            if order.status == Order.OrderStatus.CANCELLED:
+                return Response({'error': 'Order is already cancelled.'}, status=status.HTTP_400_BAD_REQUEST)
+            order.restock_items()
             order.status = Order.OrderStatus.CANCELLED
             order.save(update_fields=['status', 'updated_at'])
             cancel_request.status = DeliveryCancellationRequest.RequestStatus.APPROVED
@@ -862,6 +871,7 @@ class OrderViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAdminUser])
+    @transaction.atomic
     def admin_update_status(self, request, pk=None):
         """
         Allows an admin to manually update the order status.
@@ -878,7 +888,19 @@ class OrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        if not order.can_transition_to(new_status):
+            return Response(
+                {"error": "Cannot change status of a cancelled order."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         old_status = order.status
+        if (
+            new_status == Order.OrderStatus.CANCELLED
+            and old_status != Order.OrderStatus.CANCELLED
+        ):
+            order.restock_items()
+
         order.status = new_status
         order.save(update_fields=['status', 'updated_at'])
 
@@ -1015,10 +1037,18 @@ class OrderViewSet(viewsets.ModelViewSet):
         })
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def cancel_order(self, request, pk=None):
         """Cancel a pending order and restore stock."""
         order = self.get_object()
+        if order.status == Order.OrderStatus.CANCELLED:
+            return Response({"error": "Order is already cancelled."}, status=status.HTTP_400_BAD_REQUEST)
         if order.status == Order.OrderStatus.PENDING:
+<<<<<<< HEAD
+            order.restock_items()
+            order.status = Order.OrderStatus.CANCELLED
+            order.save(update_fields=["status", "updated_at"])
+=======
             # Restore stock — single query with select_related, then bulk_update
             items = list(order.items.select_related('product').all())
             products_to_update = []
@@ -1032,6 +1062,7 @@ class OrderViewSet(viewsets.ModelViewSet):
 
             order.status = Order.OrderStatus.CANCELLED
             order.save(update_fields=['status', 'updated_at'])
+>>>>>>> dev
             return Response({"message": "Order cancelled and stock restored."})
         return Response({"error": "Only pending orders can be cancelled."}, status=status.HTTP_400_BAD_REQUEST)
 

@@ -175,6 +175,12 @@ class PaymentSerializer(serializers.ModelSerializer):
 class OrderItemSerializer(serializers.ModelSerializer):
     subtotal = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     product_image = serializers.SerializerMethodField()
+<<<<<<< HEAD
+    unit = serializers.CharField(source='product.unit', read_only=True)
+    class Meta:
+        model = OrderItem
+        fields = ["id", "product", "product_name", "product_image", "quantity", "unit", "price", "subtotal"]
+=======
     product_unit = serializers.CharField(source="product.unit", read_only=True)
     product_unit_display = serializers.CharField(source="product.get_unit_display", read_only=True)
     total_with_preparation = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
@@ -198,6 +204,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
             "total_with_preparation",
         ]
         read_only_fields = ["preparation_specification_name", "preparation_extra_price", "total_with_preparation"]
+>>>>>>> dev
 
     def get_product_image(self, obj):
         if obj.product and obj.product.image:

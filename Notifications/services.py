@@ -6,7 +6,13 @@ import ssl
 from typing import Dict, Optional, Tuple
 
 from django.conf import settings
+<<<<<<< HEAD
+from Notifications.email_service import EmailService
+from SMS.services import MSG91SMSService
+from WhatsApp.services import MSG91WhatsAppService
+=======
 from django.core.mail import send_mail
+>>>>>>> dev
 
 logger = logging.getLogger(__name__)
 
@@ -193,8 +199,19 @@ class UnifiedNotificationService:
         recipient_email: str,
         subject: str,
         message: str,
+        html_template: Optional[str] = None,
+        template_context: Optional[Dict] = None,
         html_message: Optional[str] = None,
     ) -> Tuple[bool, Dict]:
+<<<<<<< HEAD
+        return EmailService.send(
+            recipient_email=recipient_email,
+            subject=subject,
+            plain_message=message,
+            html_template=html_template,
+            template_context=template_context,
+        )
+=======
         if not recipient_email:
             return False, {"error": "missing recipient email"}
         if not getattr(settings, "USE_REAL_SMTP", False):
@@ -218,3 +235,4 @@ class UnifiedNotificationService:
         except Exception as exc:
             logger.exception("Email send exception for %s", recipient_email)
             return False, {"error": str(exc)}
+>>>>>>> dev

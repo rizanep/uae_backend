@@ -6,7 +6,7 @@ Handles complete user account deletion with all related data
 import logging
 from django.db import transaction
 from django.conf import settings
-from django.core.mail import send_mail
+from Notifications.email_service import EmailService
 from django.utils import timezone
 from datetime import timedelta
 
@@ -164,10 +164,19 @@ class AccountDeletionService:
     
     @staticmethod
     def _send_deletion_confirmation(email, deletion_status, deletion_time):
-        """Send deletion confirmation email"""
-        
+        """Send deletion confirmation email."""
+        app_name = getattr(settings, "APP_NAME", "Simak Fresh")
+        formatted_time = deletion_time.strftime('%Y-%m-%d %H:%M:%S')
+
         if deletion_status == 'permanently_deleted':
             subject = "Your Account Has Been Permanently Deleted"
+<<<<<<< HEAD
+            headline = "Account permanently deleted"
+            body_message = (
+                "Your account has been permanently deleted as requested. "
+                "All your personal information, orders, addresses, and related data "
+                "have been removed from our system. This action is irreversible."
+=======
             message = f"""
 Hello,
 
@@ -216,11 +225,40 @@ Best regards,
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[email],
                 fail_silently=False,
+>>>>>>> dev
             )
-            logger.info(f"Deletion confirmation email sent to {email}")
-        except Exception as e:
-            logger.error(f"Failed to send deletion confirmation email: {str(e)}")
-            raise
+        else:
+            subject = "Your Account Has Been Anonymized"
+            headline = "Account anonymized"
+            body_message = (
+                "Your account has been anonymized as requested. "
+                "Your personal information has been removed and you can no longer "
+                "access your account with the original credentials."
+            )
+
+        plain_message = (
+            f"Hello,\n\n{body_message}\n\n"
+            f"Time: {formatted_time}\n\n"
+            f"Best regards,\n{app_name} Team"
+        )
+
+        success, response = EmailService.send(
+            recipient_email=email,
+            subject=subject,
+            plain_message=plain_message,
+            html_template="Notifications/emails/account_deletion.html",
+            template_context={
+                "subject_line": subject,
+                "headline": headline,
+                "body_message": body_message,
+                "deletion_time": formatted_time,
+            },
+        )
+        if not success:
+            error = response.get("error") or response.get("reason", "unknown error")
+            logger.error(f"Failed to send deletion confirmation email: {error}")
+            raise RuntimeError(f"Deletion confirmation email failed: {error}")
+        logger.info(f"Deletion confirmation email sent to {email}")
     
     @staticmethod
     def can_delete_account(user, password=None):

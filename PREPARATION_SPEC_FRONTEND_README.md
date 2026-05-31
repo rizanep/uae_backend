@@ -32,7 +32,11 @@ If a product has active preparation specifications, the user must select one bef
 The user can also send optional custom instructions.
 
 ## 2. Admin Side
+<<<<<<< HEAD
+aa
+=======
 
+>>>>>>> dev
 Admin can manage preparation specifications via the REST API (requires admin token) or via Django admin.
 
 ### Admin REST Endpoints
