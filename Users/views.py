@@ -550,6 +550,23 @@ class RefreshView(TokenRefreshView):
         data["refresh"] = refresh_token
         request._full_data = data
 
+    def _client_ip(self, request):
+        forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return request.META.get("REMOTE_ADDR", "")
+
+    def _log_refresh_failure(self, request, reason, *, user_id=None, status_code=401, detail=None):
+        logger.warning(
+            "Refresh failed: reason=%s user_id=%s status=%s detail=%s ip=%s ua=%s",
+            reason,
+            user_id,
+            status_code,
+            detail,
+            self._client_ip(request),
+            (request.META.get("HTTP_USER_AGENT") or "")[:120],
+        )
+
     def _auth_error_response(self, detail, status_code):
         response = Response({"detail": detail}, status=status_code)
         response.delete_cookie(COOKIE_ACCESS_NAME)
@@ -560,26 +577,61 @@ class RefreshView(TokenRefreshView):
         refresh_token = self._resolve_refresh_token(request)
         self._inject_refresh_into_request(request, refresh_token)
 
-        if refresh_token:
+        if not refresh_token:
+            response = super().post(request, *args, **kwargs)
+            detail = response.data.get("refresh") if isinstance(response.data, dict) else response.data
+            self._log_refresh_failure(
+                request, "missing_refresh_token", status_code=response.status_code, detail=detail,
+            )
+            return response
+
+        user_id = None
+        decode_error = None
+        try:
+            token = RefreshToken(refresh_token)
+            user_id = token.get("user_id")
             try:
-                token = RefreshToken(refresh_token)
-                user = User.objects.get(id=token["user_id"])
-                if not user.is_active:
-                    return self._auth_error_response(
-                        "user is inactive pls contact support",
-                        status.HTTP_403_FORBIDDEN,
-                    )
+                user = User.objects.get(id=user_id)
             except User.DoesNotExist:
-                logger.warning("Refresh token for deleted user_id=%s", token["user_id"])
+                self._log_refresh_failure(
+                    request, "deleted_user", user_id=user_id, detail="User account no longer exists",
+                )
                 return self._auth_error_response(
                     "User account no longer exists",
                     status.HTTP_401_UNAUTHORIZED,
                 )
-            except Exception:
-                # Invalid/expired token — let serializer return proper 401
-                pass
+            if not user.is_active:
+                self._log_refresh_failure(
+                    request, "inactive_user", user_id=user_id, status_code=403,
+                    detail="user is inactive pls contact support",
+                )
+                return self._auth_error_response(
+                    "user is inactive pls contact support",
+                    status.HTTP_403_FORBIDDEN,
+                )
+        except Exception as exc:
+            decode_error = str(exc)[:200]
 
         response = super().post(request, *args, **kwargs)
+
+        if response.status_code != status.HTTP_200_OK:
+            if decode_error:
+                self._log_refresh_failure(
+                    request, "token_decode_failed", user_id=user_id, detail=decode_error,
+                )
+            else:
+                detail = None
+                code = None
+                if isinstance(response.data, dict):
+                    detail = response.data.get("detail")
+                    code = response.data.get("code")
+                self._log_refresh_failure(
+                    request,
+                    "serializer_rejected",
+                    user_id=locals().get("user_id"),
+                    status_code=response.status_code,
+                    detail=f"{detail} ({code})" if code else detail,
+                )
 
         if response.status_code == status.HTTP_200_OK and isinstance(response.data, dict):
             access = response.data.get('access')

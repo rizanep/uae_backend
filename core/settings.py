@@ -15,6 +15,14 @@ TEST_USER_ENABLED = os.environ.get('TEST_USER_ENABLED', 'false').lower() == 'tru
 TEST_USER_EMAILS = os.environ.get('TEST_USER_EMAILS', '')
 TEST_USER_PHONES = os.environ.get('TEST_USER_PHONES', '')
 TEST_USER_OTP = os.environ.get('TEST_USER_OTP', '000000')
+SHORT_ACCESS_TOKEN_TEST_EMAILS = tuple(
+    email.strip().lower()
+    for email in os.environ.get('SHORT_ACCESS_TOKEN_TEST_EMAILS', '').split(',')
+    if email.strip()
+)
+SHORT_ACCESS_TOKEN_LIFETIME_SECONDS = int(
+    os.environ.get('SHORT_ACCESS_TOKEN_LIFETIME_SECONDS', '0')
+)
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '187.77.189.139,72.61.243.154,localhost,127.0.0.1,https://uae-ecom-project-six.vercel.app/').split(',')
 
@@ -141,6 +149,14 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 # Site URL for emails and links
 SITE_URL = os.environ.get('SITE_URL', 'https://simakfresh.ae')
+APP_STORE_URL = os.environ.get(
+    'APP_STORE_URL',
+    'https://apps.apple.com/us/app/simak-fresh/id6770574538',
+)
+PLAY_STORE_URL = os.environ.get(
+    'PLAY_STORE_URL',
+    'https://play.google.com/store/apps/details?id=com.simakfresh.app',
+)
 APP_NAME = os.environ.get('APP_NAME', 'Simak Fresh')
 STORE_MOTTO = os.environ.get('STORE_MOTTO', 'Live Seafood from SEA to HOME')
 SUPPORT_EMAIL = os.environ.get('SUPPORT_EMAIL', 'support@simakfresh.ae')
@@ -217,8 +233,8 @@ REST_FRAMEWORK = {
 # SimpleJWT basic settings
 from datetime import timedelta
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=365),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=365),
     'ROTATE_REFRESH_TOKENS': False,
     'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
@@ -337,6 +353,11 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        'Users': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
     }
 }
 
@@ -362,7 +383,11 @@ USE_REAL_MSG91_SMS = os.environ.get('USE_REAL_MSG91_SMS', 'false').lower() == 't
 USE_REAL_MSG91_WHATSAPP = os.environ.get('USE_REAL_MSG91_WHATSAPP', 'false').lower() == 'true'
 
 # OTP templates
-MSG91_OTP_SMS_TEMPLATE_ID = os.environ.get('MSG91_OTP_SMS_TEMPLATE_ID', 'otp')
+MSG91_OTP_SMS_TEMPLATE_ID = os.environ.get(
+    'MSG91_OTP_SMS_TEMPLATE_ID', '6a1d3ea9b17126518d073762'
+)
+# MSG91 flow variable name in the OTP SMS template (e.g. {{OTP}}, not VAR1)
+MSG91_OTP_SMS_VARIABLE_NAME = os.environ.get('MSG91_OTP_SMS_VARIABLE_NAME', 'OTP')
 MSG91_OTP_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_OTP_WHATSAPP_TEMPLATE_NAME', '')
 MSG91_WHATSAPP_NAMESPACE = os.environ.get('MSG91_WHATSAPP_NAMESPACE', '')
 
@@ -409,4 +434,3 @@ MSG91_REVIEW_REQUEST_WHATSAPP_TEMPLATE_NAME = os.environ.get('MSG91_REVIEW_REQUE
 WHATSAPP_ENABLE_LOGGING = os.environ.get('WHATSAPP_ENABLE_LOGGING', 'true').lower() == 'true'
 WHATSAPP_MAX_RETRIES = int(os.environ.get('WHATSAPP_MAX_RETRIES', '3'))
 WHATSAPP_REQUEST_TIMEOUT = int(os.environ.get('WHATSAPP_REQUEST_TIMEOUT', '30'))  # seconds
-

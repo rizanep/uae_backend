@@ -8,6 +8,7 @@ from Notifications.order_whatsapp import (
     format_order_whatsapp_var1,
     format_order_whatsapp_var2,
     get_order_header_image_url,
+    get_order_receipt_download_url,
 )
 
 
@@ -21,6 +22,34 @@ class OrderWhatsAppFormatTests(SimpleTestCase):
         self.assertIn("Order #42", text)
         self.assertIn("Paid", text)
         self.assertIn("Payment received", text)
+
+    def test_var1_order_confirmed_override(self):
+        order = MagicMock()
+        order.id = 7
+        order.get_status_display.return_value = "Paid"
+        order.user.first_name = "Sara"
+        text = format_order_whatsapp_var1(
+            order,
+            "Your order is confirmed.",
+            status_label_override="Order Confirmed",
+        )
+        self.assertIn("Order Confirmed", text)
+        self.assertNotIn("Order #7 - Paid", text)
+
+    def test_receipt_url_when_payment_and_receipt_exist(self):
+        order = MagicMock()
+        order.id = 99
+        payment = MagicMock()
+        payment.status = "SUCCESS"
+        receipt = MagicMock()
+        receipt.id = 12
+        payment.receipt = receipt
+        order.payment = payment
+        with patch("Notifications.order_whatsapp.settings") as mock_settings:
+            mock_settings.SITE_URL = "https://simakfresh.ae"
+            url = get_order_receipt_download_url(order)
+        self.assertIn("https://simakfresh.ae/api/orders/99/receipt_download/", url)
+        self.assertIn("token=", url)
 
     def test_components_match_msg91_shape(self):
         order = MagicMock()

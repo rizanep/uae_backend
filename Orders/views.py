@@ -11,6 +11,7 @@ from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
+from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 from datetime import timedelta
 from decimal import Decimal
 import re
@@ -1075,6 +1076,72 @@ class OrderViewSet(viewsets.ModelViewSet):
 
         buffer = render_receipt_image(order, receipt)
         return HttpResponse(buffer.getvalue(), content_type="image/png")
+
+    @action(
+        detail=True,
+        methods=["get"],
+        permission_classes=[permissions.AllowAny],
+        url_path="receipt_download",
+    )
+    def receipt_download(self, request, pk=None):
+        """
+        Download receipt PDF via signed link (for WhatsApp / email; no auth header).
+        Authenticated users can still use receipt_pdf.
+        """
+        from Notifications.order_whatsapp import (
+            RECEIPT_DOWNLOAD_MAX_AGE_SECONDS,
+            RECEIPT_DOWNLOAD_SIGNER_SALT,
+        )
+
+        token = request.query_params.get("token")
+        if not token:
+            return Response(
+                {"error": "Missing download token."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            signer = TimestampSigner(salt=RECEIPT_DOWNLOAD_SIGNER_SALT)
+            payload = signer.unsign(token, max_age=RECEIPT_DOWNLOAD_MAX_AGE_SECONDS)
+            order_id_str, receipt_id_str = payload.split(":", 1)
+            if int(order_id_str) != int(pk):
+                raise BadSignature("order mismatch")
+            receipt_id = int(receipt_id_str)
+        except (BadSignature, SignatureExpired, ValueError):
+            return Response(
+                {"error": "Invalid or expired receipt link."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        order = (
+            Order.objects.select_related("payment", "payment__receipt", "user")
+            .prefetch_related("items__product")
+            .filter(pk=pk)
+            .first()
+        )
+        if not order:
+            return Response({"error": "Order not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        payment = getattr(order, "payment", None)
+        if not payment or payment.status != Payment.PaymentStatus.SUCCESS:
+            return Response(
+                {"error": "Receipt is available only for successful payments."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        receipt = getattr(payment, "receipt", None)
+        if not receipt or receipt.id != receipt_id:
+            return Response(
+                {"error": "Receipt not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        buffer = render_receipt_pdf(order, receipt)
+        response = HttpResponse(buffer.getvalue(), content_type="application/pdf")
+        response["Content-Disposition"] = (
+            f'inline; filename="SimakFresh_Receipt_{receipt.receipt_number}.pdf"'
+        )
+        return response
 
     @action(detail=True, methods=["get"])
     def receipt_pdf(self, request, pk=None):

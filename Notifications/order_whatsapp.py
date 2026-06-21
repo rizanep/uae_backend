@@ -10,9 +10,14 @@ from __future__ import annotations
 
 from decimal import Decimal
 from typing import Any, Dict, Optional, Tuple
+from urllib.parse import quote
 
 from django.conf import settings
+from django.core.signing import TimestampSigner
 from django.utils import timezone
+
+RECEIPT_DOWNLOAD_SIGNER_SALT = "simak-order-receipt-download"
+RECEIPT_DOWNLOAD_MAX_AGE_SECONDS = 60 * 60 * 24 * 30  # 30 days
 
 # WhatsApp template variable safe limit (leave room for template fixed text).
 MAX_WHATSAPP_VAR_LEN = 900
@@ -102,11 +107,43 @@ def _format_payment_line(order) -> str:
     return ""
 
 
-def format_order_whatsapp_var1(order, status_message: str) -> str:
+def build_order_receipt_download_token(order, receipt) -> str:
+    """Signed token for public receipt PDF download (no login required)."""
+    signer = TimestampSigner(salt=RECEIPT_DOWNLOAD_SIGNER_SALT)
+    return signer.sign(f"{order.id}:{receipt.id}")
+
+
+def get_order_receipt_download_url(order) -> Optional[str]:
+    """
+    Signed backend URL for receipt PDF (OrdersViewSet.receipt_download).
+    Returns None if payment is not successful or receipt does not exist.
+    """
+    from Orders.models import Payment
+
+    try:
+        payment = order.payment
+    except Exception:
+        return None
+    if not payment or payment.status != Payment.PaymentStatus.SUCCESS:
+        return None
+    receipt = getattr(payment, "receipt", None)
+    if not receipt:
+        return None
+    site = (getattr(settings, "SITE_URL", "") or "https://simakfresh.ae").rstrip("/")
+    token = quote(build_order_receipt_download_token(order, receipt), safe="")
+    return f"{site}/api/orders/{order.id}/receipt_download/?token={token}"
+
+
+def format_order_whatsapp_var1(
+    order,
+    status_message: str,
+    *,
+    status_label_override: Optional[str] = None,
+) -> str:
     """var_1: status update headline and short message."""
     user = order.user
     name = (user.first_name or "").strip() or "Customer"
-    status_label = order.get_status_display()
+    status_label = status_label_override or order.get_status_display()
     text = (
         f"Order #{order.id} - {status_label}. "
         f"Hi {name}, {status_message.strip()}"
@@ -205,6 +242,7 @@ def send_order_status_whatsapp(
     *,
     template_name: Optional[str] = None,
     extra_var2_lines: Optional[list] = None,
+    status_label_override: Optional[str] = None,
 ) -> Tuple[bool, Dict]:
     """Send order_status WhatsApp using UnifiedNotificationService."""
     from Notifications.services import UnifiedNotificationService
@@ -213,7 +251,11 @@ def send_order_status_whatsapp(
     if not user or not user.phone_number:
         return False, {"error": "user has no phone number"}
 
-    var_1 = format_order_whatsapp_var1(order, status_message)
+    var_1 = format_order_whatsapp_var1(
+        order,
+        status_message,
+        status_label_override=status_label_override,
+    )
     var_2 = format_order_whatsapp_var2(order, extra_lines=extra_var2_lines)
     components, err = build_order_status_whatsapp_components(order, var_1, var_2)
     if err:

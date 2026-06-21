@@ -7,7 +7,7 @@ from django.db.models import Avg, Count, Q
 from django.core.cache import cache
 from django.conf import settings
 import hashlib
-from .models import Category, Product, ProductImage, ProductVideo, ProductDeliveryTier, ProductDiscountTier, ProductNotification, ProductPreparationSpecification
+from .models import Category, Product, ProductImage, ProductVideo, ProductDeliveryTier, ProductDiscountTier, ProductNotification, ProductPreparationSpecification, ProductUnit
 from .serializers import (
     CategorySerializer,
     ProductSerializer,
@@ -18,6 +18,7 @@ from .serializers import (
     ProductPreparationSpecificationSerializer,
     ProductPreparationSpecificationAdminSerializer,
     ProductNotificationSerializer,
+    ProductUnitSerializer,
 )
 
 def _get_cache_version(group):
@@ -102,6 +103,16 @@ class CategoryViewSet(viewsets.ModelViewSet):
         return result
 
 
+class ProductUnitViewSet(viewsets.ModelViewSet):
+    queryset = ProductUnit.objects.all()
+    serializer_class = ProductUnitSerializer
+    permission_classes = [permissions.IsAdminUser]
+    filter_backends = [filters.SearchFilter, django_filters.DjangoFilterBackend, filters.OrderingFilter]
+    search_fields = ["name"]
+    filterset_fields = ["is_active"]
+    ordering_fields = ["sort_order", "name", "created_at"]
+
+
 
 class ProductFilter(django_filters.FilterSet):
 
@@ -130,7 +141,7 @@ class ProductFilter(django_filters.FilterSet):
     	return queryset.filter(available_emirates__overlap=emirates)
 
 class ProductViewSet(viewsets.ModelViewSet):
-    queryset = Product.objects.filter(deleted_at__isnull=True, is_available=True).select_related('category').prefetch_related('images', 'videos', 'discount_tiers', 'delivery_tiers')
+    queryset = Product.objects.filter(deleted_at__isnull=True, is_available=True).select_related('category', 'unit_option').prefetch_related('images', 'videos', 'discount_tiers', 'delivery_tiers')
     serializer_class = ProductSerializer
     permission_classes = [IsAdminOrReadOnly]
     filter_backends = [filters.SearchFilter, django_filters.DjangoFilterBackend, filters.OrderingFilter]

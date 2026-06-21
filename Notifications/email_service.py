@@ -82,10 +82,9 @@ class EmailService:
         """Build customer PDF receipt bytes for email attachment."""
         from Orders.receipt_templates import render_receipt_pdf
 
-        logo_path = EmailService.get_logo_path()
-        logo_arg = str(logo_path) if logo_path.is_file() else None
         try:
-            pdf_buffer = render_receipt_pdf(order, receipt, logo_path=logo_arg)
+            # None → receipt_templates prefers media/branding/board.png for the header
+            pdf_buffer = render_receipt_pdf(order, receipt, logo_path=None)
             filename = f"SimakFresh_Receipt_{receipt.receipt_number}.pdf"
             return filename, pdf_buffer.getvalue(), "application/pdf"
         except Exception:

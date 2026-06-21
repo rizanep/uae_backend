@@ -8,9 +8,9 @@ import requests
 import json
 
 AUTHKEY     = "499105AowuvQcFIY0Y69e6226dP1"
-TEMPLATE_ID = "69f76af5f1d7dd63ff0419c2"
+TEMPLATE_ID = "6a1d3ea9b17126518d073762"
 MOBILE      = "918281740483"   # recipient number (no +)
-OTP_VALUE   = "123456"         # sample OTP / VAR1 value
+OTP_VALUE   = "123456"         # sample OTP (template variable name: OTP)
 
 payload = {
     "template_id": TEMPLATE_ID,
@@ -18,7 +18,7 @@ payload = {
     "recipients": [
         {
             "mobiles": MOBILE,
-            "VAR1": OTP_VALUE,
+            "OTP": OTP_VALUE,
         }
     ]
 }
@@ -34,7 +34,7 @@ print("MSG91 SMS Test")
 print("=" * 60)
 print(f"To      : {MOBILE}")
 print(f"Template: {TEMPLATE_ID}")
-print(f"VAR1    : {OTP_VALUE}")
+print(f"OTP     : {OTP_VALUE}")
 print("-" * 60)
 
 response = requests.post(

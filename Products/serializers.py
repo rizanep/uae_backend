@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.db.models import Avg
-from .models import Category, Product, ProductImage, ProductVideo, ProductDeliveryTier, ProductDiscountTier, ProductPreparationSpecification, ProductNotification
+from .models import Category, Product, ProductImage, ProductVideo, ProductDeliveryTier, ProductDiscountTier, ProductPreparationSpecification, ProductNotification, ProductUnit
 
 
 class ProductDeliveryTierSerializer(serializers.ModelSerializer):
@@ -18,6 +18,13 @@ class CategorySerializer(serializers.ModelSerializer):
         model = Category
         fields = ["id", "name", "name_arabic", "name_chinese", "slug", "description", "image", "parent"]
         read_only_fields = ["id", "slug"]
+
+
+class ProductUnitSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductUnit
+        fields = ["id", "name", "is_active", "sort_order", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
 
 
 class ProductImageSerializer(serializers.ModelSerializer):
@@ -64,6 +71,12 @@ class ProductPreparationSpecificationAdminSerializer(serializers.ModelSerializer
 
 class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
+    unit_id = serializers.PrimaryKeyRelatedField(
+        source="unit_option",
+        queryset=ProductUnit.objects.all(),
+        required=False,
+        allow_null=True,
+    )
     images = ProductImageSerializer(many=True, read_only=True)
     videos = ProductVideoSerializer(many=True, read_only=True)
     delivery_tiers = ProductDeliveryTierSerializer(many=True, read_only=True)
@@ -90,6 +103,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "image",
             "sku",
             "unit",
+            "unit_id",
             "available_emirates",
             "expected_delivery_time",
             "images",
@@ -103,6 +117,28 @@ class ProductSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "slug", "created_at", "updated_at"]
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        unit_option = attrs.get("unit_option")
+        unit_text = attrs.get("unit")
+        instance = getattr(self, "instance", None)
+
+        if unit_option is not None:
+            attrs["unit"] = unit_option.name
+            return attrs
+
+        if unit_text:
+            matched_unit = ProductUnit.objects.filter(name=unit_text).first()
+            if matched_unit:
+                attrs["unit_option"] = matched_unit
+            return attrs
+
+        if instance and instance.unit_option_id:
+            attrs["unit"] = instance.unit
+            return attrs
+
+        raise serializers.ValidationError({"unit_id": "Provide a unit_id or unit text."})
 
     def get_average_rating(self, obj):
         annotated_value = getattr(obj, "average_rating", None)
@@ -147,4 +183,3 @@ class ProductNotificationSerializer(serializers.ModelSerializer):
         model = ProductNotification
         fields = ["id", "user_id", "user_name", "user_email", "user_phone", "created_at", "notified"]
         read_only_fields = fields
-

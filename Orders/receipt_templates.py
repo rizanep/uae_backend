@@ -52,20 +52,25 @@ ML = 15 * mm
 MR = 15 * mm
 FOOTER_H = 18 * mm
 
-# Website brand palette (customer PDF receipt only)
-BRAND_NAVY       = HexColor("#002b36")
-BRAND_TEAL       = HexColor("#008CBA")
-BRAND_TEAL_LIGHT = HexColor("#00a8b5")
-BRAND_YELLOW     = HexColor("#F5B800")
+# Website / board.png brand palette (customer PDF receipt)
+BRAND_NAVY       = HexColor("#28316C")   # board.png header background
+BRAND_YELLOW     = HexColor("#F5B800")   # logo accent
 BRAND_WHITE      = HexColor("#FFFFFF")
-BRAND_BODY_BG    = HexColor("#F7FAFB")
-BRAND_TEXT       = HexColor("#002b36")
-BRAND_MUTED      = HexColor("#5A7A85")
-BRAND_ROW_ALT    = HexColor("#E8F4F8")
+BRAND_BODY_BG    = HexColor("#F4F5FA")
+BRAND_TEXT       = HexColor("#28316C")
+BRAND_MUTED      = HexColor("#4A5280")   # navy tint for labels
+BRAND_ROW_ALT    = HexColor("#E8EBF4")
+BRAND_RULE       = HexColor("#C5CAE0")   # navy-tinted dividers
+BOARD_PNG_ASPECT = 2479 / 812
+BOARD_WIDTH_FRAC = 0.52                  # board spans this fraction of page width
+PDF_HEADER_STRIPE_H = 1.2 * mm           # yellow accent line above header (matches footer)
+PDF_HEADER_EXTRA_PAD = 6 * mm            # extra navy padding above/below board
+PDF_HEADER_DETAILS_TOP_PAD = 14 * mm     # contact block offset from top of navy band
+PDF_HEADER_LINE_GAP = 1 * mm             # gap between detail lines
 
 PDF_LOGO_H = 34 * mm
 PDF_LOGO_W = 68 * mm
-PDF_HEADER_H = 58 * mm
+PDF_HEADER_H = 58 * mm                   # fallback when board.png is unavailable
 PDF_THANK_Y = FOOTER_H + 7 * mm
 BRAND_PHONE = "+971 545 446 111"
 BRAND_EMAIL = "support@simakfresh.ae"
@@ -102,6 +107,33 @@ def _default_pdf_logo_path() -> str:
     if configured and os.path.isfile(configured):
         return configured
     return branding_logo
+
+
+def _default_pdf_board_path() -> str:
+    from django.conf import settings
+    return os.path.join(settings.MEDIA_ROOT, "branding", "board.png")
+
+
+def _prepare_board_pdf(board_path: str):
+    """Load board.png for the receipt header (navy banner with logo)."""
+    try:
+        return ImageReader(board_path)
+    except Exception as e:
+        print(f"[board-pdf] {e}")
+        return None
+
+
+def _resolve_pdf_header_image(logo_path=None):
+    """Prefer board.png; fall back to email logo."""
+    if logo_path and os.path.isfile(logo_path):
+        if logo_path.endswith("board.png"):
+            return _prepare_board_pdf(logo_path), True
+        return _prepare_logo_pdf(logo_path), False
+    board_path = _default_pdf_board_path()
+    if os.path.isfile(board_path):
+        return _prepare_board_pdf(board_path), True
+    fallback = _default_pdf_logo_path()
+    return _prepare_logo_pdf(fallback), False
 
 
 def _pdf_payment_method_label(payment) -> str:
@@ -354,7 +386,7 @@ def _draw_footer_map_pin_icon(pdf, cx, cy, size, color):
 def _pdf_draw_right_icon_line(
     pdf, rx, y, text, icon_kind, font="Helvetica", fs=8, color=None, icon_size=3.4 * mm,
 ):
-    color = color or BRAND_TEAL_LIGHT
+    color = color or BRAND_WHITE
     pdf.setFont(font, fs)
     tw = pdf.stringWidth(text, font, fs)
     gap = 2.2 * mm
@@ -368,45 +400,81 @@ def _pdf_draw_right_icon_line(
     pdf.drawRightString(rx, y, text)
 
 
-def _draw_pdf_header(pdf, width, height, logo_reader, compact=False):
-    pdf.setFillColor(BRAND_NAVY)
-    pdf.rect(0, height - PDF_HEADER_H, width, PDF_HEADER_H, fill=1, stroke=0)
-    pdf.setFillColor(BRAND_TEAL)
-    pdf.rect(0, height - 2 * mm, width, 2 * mm, fill=1, stroke=0)
+def _compute_pdf_header_h(width, use_board):
+    """Navy header band height — board aspect height plus a little extra padding."""
+    if use_board:
+        board_w = width * BOARD_WIDTH_FRAC
+        return board_w / BOARD_PNG_ASPECT + PDF_HEADER_EXTRA_PAD
+    return PDF_HEADER_H + PDF_HEADER_EXTRA_PAD
 
-    logo_y = height - PDF_HEADER_H + 7 * mm
+
+def _pdf_total_header_h(header_h):
+    """Full top band: yellow stripe + navy header."""
+    return header_h + PDF_HEADER_STRIPE_H
+
+
+def _draw_pdf_header(
+    pdf, width, height, logo_reader, compact=False, *, use_board=False, header_h=None,
+):
+    header_h = header_h or _compute_pdf_header_h(width, use_board)
+    stripe_h = PDF_HEADER_STRIPE_H
+    header_top = height - stripe_h - header_h
+
+    pdf.setFillColor(BRAND_YELLOW)
+    pdf.rect(0, height - stripe_h, width, stripe_h, fill=1, stroke=0)
+    pdf.setFillColor(BRAND_NAVY)
+    pdf.rect(0, header_top, width, header_h, fill=1, stroke=0)
+
     if logo_reader:
-        pdf.drawImage(
-            logo_reader, ML, logo_y,
-            width=PDF_LOGO_W, height=PDF_LOGO_H,
-            preserveAspectRatio=True, mask="auto",
-        )
+        if use_board:
+            board_h = header_h - PDF_HEADER_EXTRA_PAD
+            board_w = board_h * BOARD_PNG_ASPECT
+            board_y = header_top + (header_h - board_h) / 2
+            pdf.drawImage(
+                logo_reader,
+                0,
+                board_y,
+                width=board_w,
+                height=board_h,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+        else:
+            pad_v = 4 * mm
+            logo_y = header_top + pad_v
+            pdf.drawImage(
+                logo_reader,
+                ML,
+                logo_y,
+                width=PDF_LOGO_W,
+                height=PDF_LOGO_H,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
 
     if compact:
         return
 
     rx = width - MR
-    cy = logo_y + PDF_LOGO_H - 2 * mm
-    pdf.setFont("Helvetica-Bold", 14)
+    cy = header_top + header_h - PDF_HEADER_DETAILS_TOP_PAD
+    pdf.setFont("Helvetica-Bold", 11)
     pdf.setFillColor(BRAND_WHITE)
-    pdf.drawRightString(rx, cy, "SIMAK FRESH")
-    cy -= 4.5 * mm
+    pdf.drawRightString(rx, cy, "SIMAK FRESH LLC")
+    cy -= 11 * 0.352778 * mm + PDF_HEADER_LINE_GAP
     _pdf_draw_right_icon_line(
         pdf, rx, cy, BRAND_PHONE, "phone",
-        font="Helvetica", fs=8, color=BRAND_TEAL_LIGHT,
+        font="Helvetica", fs=7.5, color=BRAND_WHITE,
     )
-    cy -= 4 * mm
-    addr_color = HexColor("#D8EEF2")
+    cy -= 7.5 * 0.352778 * mm + PDF_HEADER_LINE_GAP
     for line in BRAND_ADDRESS_LINES:
         _pdf_draw_right_icon_line(
             pdf, rx, cy, line, "map-pin",
-            font="Helvetica", fs=7, color=addr_color,
+            font="Helvetica", fs=7, color=BRAND_WHITE,
         )
-        cy -= 3.8 * mm
-    cy -= 1 * mm
-    pdf.setFont("Helvetica-Bold", 7.5)
-    pdf.setFillColor(BRAND_YELLOW)
-    pdf.drawRightString(rx, cy, BRAND_MOTTO)
+        cy -= 7 * 0.352778 * mm + PDF_HEADER_LINE_GAP
+    pdf.setFont("Helvetica", 7)
+    pdf.setFillColor(BRAND_WHITE)
+    pdf.drawRightString(rx, cy, BRAND_EMAIL)
 
 
 def _draw_pdf_thank_you(pdf, width):
@@ -424,7 +492,7 @@ def _draw_pdf_footer(pdf, width, page_num, total_pages, ref, generated_at):
     band_h = FOOTER_H + 2 * mm
     pdf.setFillColor(BRAND_NAVY)
     pdf.rect(0, 0, width, band_h, fill=1, stroke=0)
-    pdf.setFillColor(BRAND_TEAL)
+    pdf.setFillColor(BRAND_YELLOW)
     pdf.rect(0, band_h - 1.2 * mm, width, 1.2 * mm, fill=1, stroke=0)
 
     y = band_h - 5 * mm
@@ -432,7 +500,7 @@ def _draw_pdf_footer(pdf, width, page_num, total_pages, ref, generated_at):
     pdf.setFillColor(BRAND_YELLOW)
     pdf.drawString(ML, y, BRAND_MOTTO)
     pdf.setFont("Helvetica", 6.5)
-    pdf.setFillColor(BRAND_TEAL_LIGHT)
+    pdf.setFillColor(BRAND_WHITE)
     pdf.drawRightString(width - MR, y, f"Page {page_num} of {total_pages}")
 
     y -= 4 * mm
@@ -445,12 +513,12 @@ def _draw_pdf_footer(pdf, width, page_num, total_pages, ref, generated_at):
 
 
 def _pdf_section(pdf, x, y, label, sw=170 * mm):
-    pdf.setFillColor(BRAND_TEAL)
+    pdf.setFillColor(BRAND_NAVY)
     pdf.rect(x, y - 3.8 * mm, 3 * mm, 5.5 * mm, fill=1, stroke=0)
     pdf.setFont("Helvetica-Bold", 8.5)
     pdf.setFillColor(BRAND_NAVY)
     pdf.drawString(x + 5 * mm, y - 0.2 * mm, label.upper())
-    pdf.setStrokeColor(HexColor("#B8D4DE"))
+    pdf.setStrokeColor(BRAND_RULE)
     pdf.setLineWidth(0.4)
     pdf.line(x + 5 * mm + len(label) * 5.4 + 2 * mm, y - 0.2 * mm, x + sw, y - 0.2 * mm)
     return y - 6.5 * mm
@@ -485,7 +553,7 @@ def _pdf_table_layout(left, right):
 
 def _pdf_tbl_hdr(pdf, y, layout):
     left, tw = layout["left"], layout["tw"]
-    _rrect(pdf, left, y - 7 * mm, tw, 7.5 * mm, r=1.5 * mm, fill=BRAND_TEAL)
+    _rrect(pdf, left, y - 7 * mm, tw, 7.5 * mm, r=1.5 * mm, fill=BRAND_NAVY)
     pdf.setFont("Helvetica-Bold", 8)
     pdf.setFillColor(BRAND_WHITE)
     row_y = y - 5 * mm
@@ -516,7 +584,7 @@ def _pdf_tbl_row(pdf, y, layout, product_name, qty, unit_price, line_sub, row_n)
 
 
 def _pdf_meta_card(pdf, x, y, w, h, label, value):
-    _rrect(pdf, x, y - h, w, h, r=2 * mm, stroke=HexColor("#B8D4DE"), lw=0.6)
+    _rrect(pdf, x, y - h, w, h, r=2 * mm, stroke=BRAND_RULE, lw=0.6)
     pdf.setFillColor(BRAND_WHITE)
     pdf.rect(x + 0.5 * mm, y - h + 0.5 * mm, w - 1 * mm, h - 1 * mm, fill=1, stroke=0)
     pdf.setFont("Helvetica", 6.5)
@@ -534,7 +602,7 @@ def _pdf_badge(pdf, rx, y, status):
     badge_h = 7.5 * mm
     badge_bottom = y - 5.5 * mm
     bx = rx - badge_w
-    _rrect(pdf, bx, badge_bottom, badge_w, badge_h, r=2 * mm, fill=BRAND_TEAL)
+    _rrect(pdf, bx, badge_bottom, badge_w, badge_h, r=2 * mm, fill=BRAND_NAVY)
     pdf.setFont("Helvetica-Bold", 7.5)
     pdf.setFillColor(BRAND_WHITE)
     pdf.drawCentredString(bx + badge_w / 2, y - 1.8 * mm, label)
@@ -686,11 +754,8 @@ def render_receipt_image(order, receipt, logo_path=None) -> BytesIO:
 #  2.  STANDARD CUSTOMER PDF RECEIPT
 # ══════════════════════════════════════════════════════════════════════════════
 def render_receipt_pdf(order, receipt, logo_path=None) -> BytesIO:
-    """Customer-facing PDF receipt — Simak Fresh website branding."""
-    if logo_path is None:
-        logo_path = _default_pdf_logo_path()
-
-    logo_reader = _prepare_logo_pdf(logo_path)
+    """Customer-facing PDF receipt — Simak Fresh board branding."""
+    header_reader, use_board = _resolve_pdf_header_image(logo_path)
     generated_at = receipt.generated_at.strftime("%d-%b-%Y %H:%M")
 
     payment = getattr(order, "payment", None)
@@ -699,13 +764,15 @@ def render_receipt_pdf(order, receipt, logo_path=None) -> BytesIO:
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
+    header_h = _compute_pdf_header_h(width, use_board)
+    total_header_h = _pdf_total_header_h(header_h)
 
     pdf.setFillColor(BRAND_BODY_BG)
     pdf.rect(0, 0, width, height, fill=1, stroke=0)
 
-    _draw_pdf_header(pdf, width, height, logo_reader)
+    _draw_pdf_header(pdf, width, height, header_reader, use_board=use_board, header_h=header_h)
 
-    y = height - PDF_HEADER_H - 10 * mm
+    y = height - total_header_h - 10 * mm
     rx = width - MR
     pdf.setFont("Helvetica-Bold", 16)
     pdf.setFillColor(BRAND_NAVY)
@@ -719,7 +786,7 @@ def render_receipt_pdf(order, receipt, logo_path=None) -> BytesIO:
     pdf.setFillColor(BRAND_MUTED)
     pdf.drawString(ML, y, f"Receipt No: {receipt.receipt_number}")
     y -= 3 * mm
-    pdf.setStrokeColor(HexColor("#B8D4DE"))
+    pdf.setStrokeColor(BRAND_RULE)
     pdf.setLineWidth(0.5)
     pdf.line(ML, y, width - MR, y)
     y -= 7 * mm
@@ -795,8 +862,11 @@ def render_receipt_pdf(order, receipt, logo_path=None) -> BytesIO:
             pg += 1
             pdf.setFillColor(BRAND_BODY_BG)
             pdf.rect(0, 0, width, height, fill=1, stroke=0)
-            _draw_pdf_header(pdf, width, height, logo_reader, compact=True)
-            y = height - PDF_HEADER_H - 12 * mm
+            _draw_pdf_header(
+                pdf, width, height, header_reader, compact=True,
+                use_board=use_board, header_h=header_h,
+            )
+            y = height - total_header_h - 12 * mm
             y = _pdf_tbl_hdr(pdf, y, layout)
             row_n = 0
 
@@ -810,7 +880,7 @@ def render_receipt_pdf(order, receipt, logo_path=None) -> BytesIO:
         row_n += 1
 
     y -= 3 * mm
-    pdf.setStrokeColor(HexColor("#B8D4DE"))
+    pdf.setStrokeColor(BRAND_RULE)
     pdf.setLineWidth(0.5)
     pdf.line(ML, y, width - MR, y)
     y -= 4 * mm
@@ -822,8 +892,11 @@ def render_receipt_pdf(order, receipt, logo_path=None) -> BytesIO:
         pg += 1
         pdf.setFillColor(BRAND_BODY_BG)
         pdf.rect(0, 0, width, height, fill=1, stroke=0)
-        _draw_pdf_header(pdf, width, height, logo_reader, compact=True)
-        y = height - PDF_HEADER_H - 14 * mm
+        _draw_pdf_header(
+            pdf, width, height, header_reader, compact=True,
+            use_board=use_board, header_h=header_h,
+        )
+        y = height - total_header_h - 14 * mm
 
     srx = width - MR
     discount = Decimal(str(getattr(order, "discount_amount", 0) or 0))
@@ -869,10 +942,7 @@ def render_receipt_pdf(order, receipt, logo_path=None) -> BytesIO:
 # ══════════════════════════════════════════════════════════════════════════════
 def render_admin_receipt_pdf(order, logo_path=None) -> BytesIO:
     """Full admin receipt — branded layout, QR code, delivery details."""
-    if logo_path is None:
-        logo_path = _default_pdf_logo_path()
-
-    logo_reader = _prepare_logo_pdf(logo_path)
+    header_reader, use_board = _resolve_pdf_header_image(logo_path)
     payment = getattr(order, "payment", None)
     pay_method = _pdf_payment_method_label(payment)
     pay_status = payment.get_status_display() if payment else "—"
@@ -887,15 +957,17 @@ def render_admin_receipt_pdf(order, logo_path=None) -> BytesIO:
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
+    header_h = _compute_pdf_header_h(width, use_board)
+    total_header_h = _pdf_total_header_h(header_h)
     generated_at = datetime.now().strftime("%d-%b-%Y %H:%M")
     table_right = width - MR
 
     pdf.setFillColor(BRAND_BODY_BG)
     pdf.rect(0, 0, width, height, fill=1, stroke=0)
 
-    _draw_pdf_header(pdf, width, height, logo_reader)
+    _draw_pdf_header(pdf, width, height, header_reader, use_board=use_board, header_h=header_h)
 
-    title_y = height - PDF_HEADER_H - 10 * mm
+    title_y = height - total_header_h - 10 * mm
     pdf.setFont("Helvetica-Bold", 16)
     pdf.setFillColor(BRAND_NAVY)
     pdf.drawString(ML, title_y, "ORDER RECEIPT")
@@ -994,8 +1066,11 @@ def render_admin_receipt_pdf(order, logo_path=None) -> BytesIO:
             pg += 1
             pdf.setFillColor(BRAND_BODY_BG)
             pdf.rect(0, 0, width, height, fill=1, stroke=0)
-            _draw_pdf_header(pdf, width, height, logo_reader, compact=True)
-            y = height - PDF_HEADER_H - 12 * mm
+            _draw_pdf_header(
+                pdf, width, height, header_reader, compact=True,
+                use_board=use_board, header_h=header_h,
+            )
+            y = height - total_header_h - 12 * mm
             pdf.setFont("Helvetica-Bold", 11)
             pdf.setFillColor(BRAND_NAVY)
             pdf.drawString(ML, y, "ORDER ITEMS (continued)")
@@ -1013,7 +1088,7 @@ def render_admin_receipt_pdf(order, logo_path=None) -> BytesIO:
         row_n += 1
 
     y -= 3 * mm
-    pdf.setStrokeColor(HexColor("#B8D4DE"))
+    pdf.setStrokeColor(BRAND_RULE)
     pdf.setLineWidth(0.5)
     pdf.line(ML, y, table_right, y)
     y -= 6 * mm

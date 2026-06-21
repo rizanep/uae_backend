@@ -14,13 +14,13 @@ django.setup()
 
 from Notifications.push_service import send_push_to_tokens
 
-token = "fxuNlf3mQGGjv4exwfR0pu:APA91bEAuN1jUBvrJmmhKD85onKjgz0mA2b6AjeeOLlRrBfFwTmfl0cWP7rH3gURwKxOZdXUP6LUbq8gMdGDEx609JS-hr2VshR9J_TJyeq4kFlIVC_NDFY"
+token = "dcGXIRf0dEX7t6oZcLHhGp:APA91bGdW3NOmWxTmNPB2bpO-rCQM62rA9YyoiOqPcTZ1S4J0J4NjiGlO5IDvjbug_7fdlwsql-aF5cxSL7YwHcv4qhX9rGF1zGKZ5tCIJ-nRpdrU2FvPuY"
 
 print("Sending test push notification...")
 result = send_push_to_tokens(
     tokens=[token],
-    title="Simak Fresh Test 🐟",
-    body="This is a test push notification from Simak Fresh!",
+    title="simakfresh",
+    body="welcome to simakfresh junaaid",
     data={"type": "test", "action": "open_home"},
 )
 

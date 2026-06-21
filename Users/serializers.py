@@ -1,6 +1,7 @@
 from django.contrib.auth import authenticate
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
+from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.exceptions import AuthenticationFailed
 from .models import User, UserProfile, OTPToken, UserAddress, DeliveryBoyProfile
 from django.utils import timezone
@@ -8,6 +9,25 @@ from datetime import timedelta
 from .tasks import send_email_task
 from django.conf import settings
 from .otp_utils import generate_otp_code
+
+
+def _short_access_token_lifetime_for_user(user):
+    email = (getattr(user, "email", "") or "").strip().lower()
+    lifetime_seconds = getattr(settings, "SHORT_ACCESS_TOKEN_LIFETIME_SECONDS", 0)
+    test_emails = getattr(settings, "SHORT_ACCESS_TOKEN_TEST_EMAILS", ())
+    if email and email in test_emails and lifetime_seconds > 0:
+        return timedelta(seconds=lifetime_seconds)
+    return None
+
+
+def _maybe_shorten_access_token(refresh_token, user):
+    lifetime = _short_access_token_lifetime_for_user(user)
+    if lifetime is None:
+        return str(refresh_token.access_token)
+
+    access_token = refresh_token.access_token
+    access_token.set_exp(lifetime=lifetime)
+    return str(access_token)
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
@@ -235,6 +255,11 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         token['email'] = user.email
         return token
 
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        data['access'] = _maybe_shorten_access_token(RefreshToken(data['refresh']), self.user)
+        return data
+
 
 class SafeTokenRefreshSerializer(TokenRefreshSerializer):
     """
@@ -243,12 +268,18 @@ class SafeTokenRefreshSerializer(TokenRefreshSerializer):
 
     def validate(self, attrs):
         try:
-            return super().validate(attrs)
+            data = super().validate(attrs)
         except User.DoesNotExist:
             raise AuthenticationFailed(
                 "User account no longer exists",
                 code="user_not_found",
             )
+
+        refresh_token = RefreshToken(attrs["refresh"])
+        user = User.objects.filter(id=refresh_token.get("user_id")).first()
+        if user:
+            data["access"] = _maybe_shorten_access_token(refresh_token, user)
+        return data
 
 
 class GoogleOAuthSerializer(serializers.Serializer):

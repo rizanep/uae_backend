@@ -8,6 +8,7 @@ from .models import ContactMessage, Notification
 from .services import UnifiedNotificationService
 from .push_service import send_push_to_tokens
 
+
 User = get_user_model()
 
 
@@ -521,8 +522,9 @@ def send_login_otp_notification(self, otp_id, otp_platform='sms'):
         'body_1': otp.otp_code,
         'button_1': otp.otp_code,
     }
+    otp_var = getattr(settings, 'MSG91_OTP_SMS_VARIABLE_NAME', 'OTP')
     sms_variables = {
-        'VAR1': otp.otp_code,
+        otp_var: otp.otp_code,
     }
 
     if selected_platform == 'whatsapp':
@@ -656,10 +658,31 @@ def send_order_status_multichannel_notification(self, order_id):
     }
 
     if user.phone_number:
-        wa_success, wa_response = send_order_status_whatsapp(
-            order,
-            content["message"],
-        )
+        from Orders.models import Order as OrderModel
+
+        wa_success = False
+        wa_response = {"skipped": True, "reason": "WhatsApp not sent for this status"}
+
+        if order.status == OrderModel.OrderStatus.PAID:
+            wa_success, wa_response = send_order_status_whatsapp(
+                order,
+                content["message"],
+                status_label_override="Order Confirmed",
+            )
+        elif order.status == OrderModel.OrderStatus.DELIVERED:
+            from Notifications.order_whatsapp import get_order_receipt_download_url
+
+            delivered_message = content["message"]
+            receipt_url = get_order_receipt_download_url(order)
+            if receipt_url:
+                delivered_message = (
+                    f"{delivered_message} Download your receipt PDF: {receipt_url}"
+                )
+            wa_success, wa_response = send_order_status_whatsapp(
+                order,
+                delivered_message,
+            )
+
         results['channels']['whatsapp'] = {'success': wa_success, 'response': wa_response}
 
     if user.email:

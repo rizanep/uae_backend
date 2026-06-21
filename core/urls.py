@@ -19,8 +19,11 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from core.rate_limit_monitoring import RateLimitStatusAPI, RateLimitStatsAPI
+from core.views import app_download_redirect
 
 urlpatterns = [
+    path('app/', app_download_redirect, name='app-download'),
+    path('api/app/', app_download_redirect, name='app-download-api'),
     # Django built-in admin (keep off /admin — React admin SPA uses that prefix)
     path('django-admin/', admin.site.urls),
     path('api/', include('Users.urls')),

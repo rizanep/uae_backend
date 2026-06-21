@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils.text import slugify
 from django.utils.translation import gettext_lazy as _
@@ -42,10 +43,27 @@ class Category(SoftDeleteModel):
         super().save(*args, **kwargs)
 
 
-class ProductUnit(models.TextChoices):
-    PIECE = "piece", _("Piece")
-    KG = "kg", _("Kg")
-    G = "100g", _("100g")
+DEFAULT_PRODUCT_UNIT_NAMES = [
+    "piece",
+    "kg",
+    "100g",
+]
+
+
+class ProductUnit(models.Model):
+    name = models.CharField(_("name"), max_length=50, unique=True)
+    is_active = models.BooleanField(_("is active"), default=True)
+    sort_order = models.PositiveIntegerField(_("sort order"), default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Product Unit")
+        verbose_name_plural = _("Product Units")
+        ordering = ["sort_order", "name"]
+
+    def __str__(self):
+        return self.name
 
 
 DEFAULT_AVAILABLE_EMIRATES = [
@@ -89,7 +107,15 @@ class Product(SoftDeleteModel):
     is_available = models.BooleanField(_("is available"), default=True)
     image = models.ImageField(_("main image"), upload_to="products/", blank=True, null=True)
     sku = models.CharField(_("SKU"), max_length=50, unique=True, blank=True)
-    unit = models.CharField(_("unit"), max_length=20, choices=ProductUnit.choices, default=ProductUnit.PIECE)
+    unit = models.CharField(_("unit"), max_length=50, default=DEFAULT_PRODUCT_UNIT_NAMES[0])
+    unit_option = models.ForeignKey(
+        ProductUnit,
+        on_delete=models.PROTECT,
+        related_name="products",
+        verbose_name=_("unit option"),
+        null=True,
+        blank=True,
+    )
     available_emirates = models.JSONField(_("available emirates"), default=default_available_emirates)
     expected_delivery_time = models.CharField(
         _("expected delivery time"), 
@@ -107,7 +133,21 @@ class Product(SoftDeleteModel):
     def __str__(self):
         return self.name
 
+    def get_unit_display(self):
+        return self.unit
+
+    def clean(self):
+        super().clean()
+        if not self.unit and not self.unit_option_id:
+            raise ValidationError({"unit": _("Unit is required.")})
+
     def save(self, *args, **kwargs):
+        if self.unit_option_id:
+            if getattr(self, "unit_option", None) is None:
+                self.unit_option = ProductUnit.objects.filter(pk=self.unit_option_id).first()
+            if self.unit_option:
+                self.unit = self.unit_option.name
+
         # Check if stock is increasing from 0
         if self.pk:
             try:

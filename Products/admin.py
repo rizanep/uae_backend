@@ -1,6 +1,15 @@
 from django.contrib import admin
-from .models import Category, Product, ProductImage, ProductVideo, ProductNotification, ProductPreparationSpecification
+from .models import Category, Product, ProductImage, ProductVideo, ProductNotification, ProductPreparationSpecification, ProductUnit
 from .delivery_models import ProductDeliveryTier
+
+@admin.register(ProductUnit)
+class ProductUnitAdmin(admin.ModelAdmin):
+    list_display = ["name", "is_active", "sort_order", "created_at"]
+    list_filter = ["is_active", "created_at"]
+    search_fields = ["name"]
+    list_editable = ["is_active", "sort_order"]
+    ordering = ["sort_order", "name"]
+
 
 @admin.register(Category)
 class CategoryAdmin(admin.ModelAdmin):
@@ -41,12 +50,13 @@ class ProductAdmin(admin.ModelAdmin):
         "price",
         "discount_price",
         "stock",
+        "unit",
         "is_available",
         "expected_delivery_time",
         "created_at",
         "deleted_at",
     ]
-    list_filter = ["category", "is_available", "created_at", "deleted_at"]
+    list_filter = ["category", "unit_option", "is_available", "created_at", "deleted_at"]
     prepopulated_fields = {"slug": ("name",)}
     search_fields = ["name", "description", "sku"]
     inlines = [ProductImageInline, ProductVideoInline, ProductDeliveryTierInline, ProductPreparationSpecificationInline]
