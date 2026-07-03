@@ -65,6 +65,14 @@ class ProductUnit(models.Model):
     def __str__(self):
         return self.name
 
+    def save(self, *args, **kwargs):
+        previous_name = None
+        if self.pk:
+            previous_name = type(self).objects.filter(pk=self.pk).values_list("name", flat=True).first()
+        super().save(*args, **kwargs)
+        if previous_name and previous_name != self.name:
+            self.products.update(unit=self.name)
+
 
 DEFAULT_AVAILABLE_EMIRATES = [
     "abu_dhabi",
@@ -124,11 +132,12 @@ class Product(SoftDeleteModel):
         null=True,
         help_text=_("e.g., '30-60 mins', 'Next Day', '2-3 Business Days'")
     )
+    sortorder = models.PositiveIntegerField(_("sort order"), default=1, help_text=_("Display order for products. Multiple products can have the same order."))
 
     class Meta:
         verbose_name = _("Product")
         verbose_name_plural = _("Products")
-        ordering = ["-created_at"]
+        ordering = ["sortorder", "id"]
 
     def __str__(self):
         return self.name

@@ -61,6 +61,7 @@ class ProductAdmin(admin.ModelAdmin):
     search_fields = ["name", "description", "sku"]
     inlines = [ProductImageInline, ProductVideoInline, ProductDeliveryTierInline, ProductPreparationSpecificationInline]
     list_editable = ["price", "discount_price", "stock", "is_available", "expected_delivery_time"]
+    exclude = ["unit"]
 
 
 @admin.register(ProductPreparationSpecification)

@@ -141,13 +141,13 @@ class ProductFilter(django_filters.FilterSet):
     	return queryset.filter(available_emirates__overlap=emirates)
 
 class ProductViewSet(viewsets.ModelViewSet):
-    queryset = Product.objects.filter(deleted_at__isnull=True, is_available=True).select_related('category', 'unit_option').prefetch_related('images', 'videos', 'discount_tiers', 'delivery_tiers')
+    queryset = Product.objects.filter(deleted_at__isnull=True, is_available=True).select_related('category', 'unit_option').prefetch_related('images', 'videos', 'discount_tiers', 'delivery_tiers').order_by('sortorder', 'id')
     serializer_class = ProductSerializer
     permission_classes = [IsAdminOrReadOnly]
     filter_backends = [filters.SearchFilter, django_filters.DjangoFilterBackend, filters.OrderingFilter]
     filterset_class = ProductFilter
     search_fields = ["name", "description", "sku"]
-    ordering_fields = ["price", "created_at", "stock"]
+    ordering_fields = ["sortorder", "price", "created_at", "stock"]
 
     def list(self, request, *args, **kwargs):
         if request.user and request.user.is_staff:

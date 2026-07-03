@@ -9,11 +9,11 @@ class ProductUnitApiTests(APITestCase):
     def setUp(self):
         self.user_model = get_user_model()
         self.admin_user = self.user_model.objects.create_user(
-            username="admin",
             email="admin@example.com",
             password="password123",
             is_staff=True,
             is_superuser=True,
+            role="admin",
         )
         self.category = Category.objects.create(name="Fish")
         self.unit = ProductUnit.objects.create(name="box", sort_order=1)

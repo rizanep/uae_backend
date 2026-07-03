@@ -106,6 +106,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "unit_id",
             "available_emirates",
             "expected_delivery_time",
+            "sortorder",
             "images",
             "videos",
             "delivery_tiers",
@@ -134,7 +135,7 @@ class ProductSerializer(serializers.ModelSerializer):
                 attrs["unit_option"] = matched_unit
             return attrs
 
-        if instance and instance.unit_option_id:
+        if instance and instance.unit:
             attrs["unit"] = instance.unit
             return attrs
 
